@@ -1,7 +1,7 @@
 import requests
 
 def get_btc_price():
-    url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
 
     try:
         r = requests.get(url, timeout=10)
@@ -11,7 +11,7 @@ def get_btc_price():
 
         data = r.json()
 
-        price = data["price"]
+       price = data["bitcoin"]["usd"]
 
         return f":moneybag: قیمت BTC/USDT:\n{price} دلار"
 
