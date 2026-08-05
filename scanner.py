@@ -1,9 +1,13 @@
 import requests
 
-def test_connection():
-    url = "https://api.toobit.com"
+def get_btc_price():
+    url = "https://api.toobit.com/api/v1/ticker?symbol=BTCUSDT"
+
     try:
-        response = requests.get(url, timeout=10)
-        return response.status_code
+        r = requests.get(url, timeout=10)
+        data = r.json()
+
+        return f"قیمت BTC: {data}"
+
     except Exception as e:
-        return str(e)
+        return f"خطا: {e}"
