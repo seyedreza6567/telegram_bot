@@ -1,6 +1,6 @@
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes
-
+from scanner import get_btc_price
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [":chart_with_upwards_trend: سیگنال‌ها", ":moneybag: قیمت‌ها"],
