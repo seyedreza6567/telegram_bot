@@ -11,7 +11,7 @@ def get_btc_price():
 
         data = r.json()
 
-       price = data["bitcoin"]["usd"]
+        price = data["bitcoin"]["usd"]
 
         return f":moneybag: قیمت BTC/USDT:\n{price} دلار"
 
