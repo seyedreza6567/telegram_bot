@@ -1,19 +1,20 @@
 import requests
 
+COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+
+
 def get_btc_price():
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-
     try:
-        r = requests.get(url, timeout=10)
-
-        if r.status_code != 200:
-            return f"خطای سرور: {r.status_code}"
+        r = requests.get(COINGECKO_URL, timeout=10)
+        r.raise_for_status()
 
         data = r.json()
-
         price = data["bitcoin"]["usd"]
 
-        return f":moneybag: قیمت BTC/USDT:\n{price} دلار"
+        return f"💰 قیمت BTC/USDT:\n{price:,} دلار"
 
-    except Exception as e:
-        return f"خطا: {e}"
+    except requests.RequestException as e:
+        return f"❌ خطای ارتباط با سرور:\n{e}"
+
+    except KeyError:
+        return "❌ اطلاعات قیمت دریافت نشد."
