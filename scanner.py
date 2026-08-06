@@ -36,7 +36,7 @@ def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
         return None
 
 
-if name == "__main__":
+if __name__ == "__main__":
     df = get_klines()
 
     if df is not None:
