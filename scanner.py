@@ -1,20 +1,45 @@
 import requests
+import pandas as pd
 
-COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+BASE_URL = "https://api.toobit.com"
 
+def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
+    url = f"{BASE_URL}/api/v1/market/kline"
 
-def get_btc_price():
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "limit": limit
+    }
+
     try:
-        r = requests.get(COINGECKO_URL, timeout=10)
+        r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
 
         data = r.json()
-        price = data["bitcoin"]["usd"]
 
-        return f"💰 قیمت BTC/USDT:\n{price:,} دلار"
+        if "data" not in data:
+            return None
 
-    except requests.RequestException as e:
-        return f"❌ خطای ارتباط با سرور:\n{e}"
+        df = pd.DataFrame(data["data"])
 
-    except KeyError:
-        return "❌ اطلاعات قیمت دریافت نشد."
+        df["open"] = df["open"].astype(float)
+        df["high"] = df["high"].astype(float)
+        df["low"] = df["low"].astype(float)
+        df["close"] = df["close"].astype(float)
+        df["volume"] = df["volume"].astype(float)
+
+        return df
+
+    except Exception as e:
+        print(e)
+        return None
+
+
+if name == "__main__":
+    df = get_klines()
+
+    if df is not None:
+        print(df.tail())
+    else:
+        print("خطا در دریافت داده")
