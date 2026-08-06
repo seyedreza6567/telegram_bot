@@ -1,9 +1,12 @@
 import requests
 import pandas as pd
 
+
 BASE_URL = "https://api.toobit.com"
 
+
 def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
+
     url = f"{BASE_URL}/api/v1/market/kline"
 
     params = {
@@ -14,7 +17,9 @@ def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
 
     try:
         r = requests.get(url, params=params, timeout=10)
-        r.raise_for_status()
+
+        print("STATUS:", r.status_code)
+        print("RESPONSE:", r.text[:500])
 
         data = r.json()
 
@@ -23,23 +28,19 @@ def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
 
         df = pd.DataFrame(data["data"])
 
-        df["open"] = df["open"].astype(float)
-        df["high"] = df["high"].astype(float)
-        df["low"] = df["low"].astype(float)
-        df["close"] = df["close"].astype(float)
-        df["volume"] = df["volume"].astype(float)
-
         return df
 
     except Exception as e:
-        print(e)
+        print("ERROR:", e)
         return None
 
 
 if __name__ == "__main__":
+
     df = get_klines()
 
     if df is not None:
-        print(df.tail())
+        print(df.head())
+
     else:
         print("خطا در دریافت داده")
