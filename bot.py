@@ -1,3 +1,4 @@
+from config import BOT_TOKEN
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -79,10 +80,8 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
 
 
-TOKEN = "8656837062:AAHEpTcYOsWkyW_ZXi3fIIcD6AtA_YnZU4Y"
+app = Application.builder().token(BOT_TOKEN).build()
 
-
-app = Application.builder().token(TOKEN).build()
 
 app.add_handler(CommandHandler("start", start))
 app.add_handler(
