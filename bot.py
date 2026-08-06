@@ -1,4 +1,3 @@
-from config import BOT_TOKEN
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -8,7 +7,8 @@ from telegram.ext import (
     filters,
 )
 
-from scanner import get_btc_price
+from config import BOT_TOKEN
+from scanner import get_klines
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,20 +54,41 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif text in ["⏱️ 1H", "⏱️ 2H", "⏱️ 3H", "⏱️ 4H", "⏱️ 24H"]:
 
-        timeframe = text.replace("⏱️ ", "")
+        interval = text.replace("⏱️ ", "").lower()
 
-        await update.message.reply_text(
-            f"📊 تحلیل BTC/USDT\n\n"
-            f"تایم‌فریم: {timeframe}\n\n"
-            f"{get_btc_price()}\n\n"
-            "⏳ بخش تحلیل و سیگنال در حال ساخت است..."
-        )
+        df = get_klines(interval=interval)
+
+        if df is not None:
+            price = df["close"].iloc[-1]
+
+            await update.message.reply_text(
+                f"📊 تحلیل BTC/USDT\n\n"
+                f"⏱️ تایم‌فریم: {interval}\n"
+                f"💰 قیمت آخر: {price}\n\n"
+                "⏳ موتور تحلیل و اندیکاتورها در حال ساخت است..."
+            )
+
+        else:
+            await update.message.reply_text(
+                "❌ دریافت اطلاعات بازار ناموفق بود."
+            )
+
 
     elif text == "💰 قیمت‌ها":
 
-        await update.message.reply_text(
-            get_btc_price()
-        )
+        df = get_klines()
+
+        if df is not None:
+            price = df["close"].iloc[-1]
+
+            await update.message.reply_text(
+                f"💰 قیمت BTC/USDT:\n{price}"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ دریافت قیمت ناموفق بود."
+            )
+
 
     elif text == "⚙️ تنظیمات":
 
@@ -75,17 +96,21 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚙️ تنظیمات ربات به‌زودی اضافه می‌شود."
         )
 
+
     elif text == "🔙 برگشت":
 
         await start(update, context)
+
 
 
 app = Application.builder().token(BOT_TOKEN).build()
 
 
 app.add_handler(CommandHandler("start", start))
+
 app.add_handler(
     MessageHandler(filters.TEXT & ~filters.COMMAND, messages)
 )
+
 
 app.run_polling()
