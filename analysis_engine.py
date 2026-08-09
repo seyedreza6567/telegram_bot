@@ -2,11 +2,11 @@ import pandas as pd
 import numpy as np
 
 
-TIMEFRAMES = ["1h", "2h", "3h", "4h", "1d"]
-
-
 def calculate_ema(df, period):
-    return df["close"].ewm(span=period, adjust=False).mean()
+    return df["close"].ewm(
+        span=period,
+        adjust=False
+    ).mean()
 
 
 def calculate_rsi(df, period=14):
@@ -27,9 +27,7 @@ def calculate_rsi(df, period=14):
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    rsi = 100 - (100 / (1 + rs))
-
-    return rsi
+    return 100 - (100 / (1 + rs))
 
 
 def calculate_macd(df):
@@ -55,102 +53,147 @@ def calculate_macd(df):
     return macd, signal, histogram
 
 
+def calculate_atr(df, period=14):
+
+    high_low = df["high"] - df["low"]
+
+    high_close = (
+        df["high"] - df["close"].shift()
+    ).abs()
+
+    low_close = (
+        df["low"] - df["close"].shift()
+    ).abs()
+
+    true_range = pd.concat(
+        [high_low, high_close, low_close],
+        axis=1
+    ).max(axis=1)
+
+    return true_range.rolling(period).mean()
+
+
 def analyze(df):
 
-    if df is None or len(df) < 100:
+    if df is None or len(df) < 200:
         return {
             "signal": "NO TRADE",
             "score": 0,
+            "confidence": 0,
             "reason": "داده کافی نیست"
         }
 
     df = df.copy()
 
+    # EMA
     df["EMA20"] = calculate_ema(df, 20)
     df["EMA50"] = calculate_ema(df, 50)
     df["EMA200"] = calculate_ema(df, 200)
 
+    # RSI
     df["RSI"] = calculate_rsi(df)
 
+    # MACD
     macd, signal, histogram = calculate_macd(df)
 
     df["MACD"] = macd
     df["MACD_SIGNAL"] = signal
     df["MACD_HIST"] = histogram
 
+    # ATR
+    df["ATR"] = calculate_atr(df)
+
+    # Volume average
+    df["VOLUME_AVG"] = df["volume"].rolling(20).mean()
+
     last = df.iloc[-1]
+    previous = df.iloc[-2]
 
-    score_long = 0
-    score_short = 0
+    long_score = 0
+    short_score = 0
 
-    reasons_long = []
-    reasons_short = []
+    long_reasons = []
+    short_reasons = []
 
-    # EMA TREND
+    # -------------------------
+    # TREND
+    # -------------------------
+
     if last["close"] > last["EMA200"]:
-        score_long += 2
-        reasons_long.append("قیمت بالای EMA200")
+        long_score += 2
+        long_reasons.append("روند بالای EMA200")
 
-    if last["close"] < last["EMA200"]:
-        score_short += 2
-        reasons_short.append("قیمت زیر EMA200")
+    elif last["close"] < last["EMA200"]:
+        short_score += 2
+        short_reasons.append("روند زیر EMA200")
 
+    # -------------------------
     # EMA MOMENTUM
+    # -------------------------
+
     if last["EMA20"] > last["EMA50"]:
-        score_long += 1
-        reasons_long.append("EMA20 بالای EMA50")
+        long_score += 2
+        long_reasons.append("EMA20 بالای EMA50")
 
-    if last["EMA20"] < last["EMA50"]:
-        score_short += 1
-        reasons_short.append("EMA20 زیر EMA50")
+    elif last["EMA20"] < last["EMA50"]:
+        short_score += 2
+        short_reasons.append("EMA20 زیر EMA50")
 
+    # -------------------------
     # RSI
-    if 50 < last["RSI"] < 70:
-        score_long += 1
-        reasons_long.append("RSI مناسب خرید")
+    # -------------------------
 
-    if 30 < last["RSI"] < 50:
-        score_short += 1
-        reasons_short.append("RSI مناسب فروش")
+    if 50 <= last["RSI"] <= 65:
+        long_score += 2
+        long_reasons.append("RSI مناسب LONG")
 
+    elif 35 <= last["RSI"] < 50:
+        short_score += 2
+        short_reasons.append("RSI مناسب SHORT")
+
+    # جلوگیری از ورود در اشباع شدید
+    if last["RSI"] >= 75:
+        long_score -= 2
+
+    if last["RSI"] <= 25:
+        short_score -= 2
+
+    # -------------------------
     # MACD
-    if last["MACD"] > last["MACD_SIGNAL"]:
-        score_long += 2
-        reasons_long.append("MACD صعودی")
+    # -------------------------
 
-    if last["MACD"] < last["MACD_SIGNAL"]:
-        score_short += 2
-        reasons_short.append("MACD نزولی")
+    if (
+        last["MACD"] > last["MACD_SIGNAL"]
+        and last["MACD_HIST"] > previous["MACD_HIST"]
+    ):
+        long_score += 2
+        long_reasons.append("MACD و مومنتوم صعودی")
 
-    # تصمیم نهایی
-    if score_long >= 5 and score_long > score_short + 1:
+    elif (
+        last["MACD"] < last["MACD_SIGNAL"]
+        and last["MACD_HIST"] < previous["MACD_HIST"]
+    ):
+        short_score += 2
+        short_reasons.append("MACD و مومنتوم نزولی")
 
-        return {
-            "signal": "LONG",
-            "score": score_long,
-            "rsi": round(float(last["RSI"]), 2),
-            "price": float(last["close"]),
-            "reason": " | ".join(reasons_long)
-        }
+    # -------------------------
+    # VOLUME
+    # -------------------------
 
-    if score_short >= 5 and score_short > score_long + 1:
+    if last["volume"] > last["VOLUME_AVG"]:
 
-        return {
-            "signal": "SHORT",
-            "score": score_short,
-            "rsi": round(float(last["RSI"]), 2),
-            "price": float(last["close"]),
-            "reason": " | ".join(reasons_short)
-        }
+        if long_score > short_score:
+            long_score += 1
+            long_reasons.append("حجم تأییدکننده")
 
-    return {
-        "signal": "NO TRADE",
-        "score": max(score_long, score_short),
-        "rsi": round(float(last["RSI"]), 2),
-        "price": float(last["close"]),
-        "reason": "شرایط ورود به اندازه کافی قوی نیست"
-    }
+        elif short_score > long_score:
+            short_score += 1
+            short_reasons.append("حجم تأییدکننده")
 
+    # -------------------------
+    # DECISION
+    # -------------------------
 
-if __name__ == "__main__":
-    print("Analysis Engine OK ✅")
+    difference = abs(long_score - short_score)
+
+    best_score = max(long_scor
