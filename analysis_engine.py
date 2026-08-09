@@ -70,7 +70,9 @@ def calculate_atr(df, period=14):
         axis=1
     ).max(axis=1)
 
-    return true_range.rolling(period).mean()
+    return true_range.rolling(
+        period
+    ).mean()
 
 
 def analyze(df):
@@ -99,7 +101,9 @@ def analyze(df):
 
     df["ATR"] = calculate_atr(df)
 
-    df["VOLUME_AVG"] = df["volume"].rolling(20).mean()
+    df["VOLUME_AVG"] = df["volume"].rolling(
+        20
+    ).mean()
 
     last = df.iloc[-1]
     previous = df.iloc[-2]
@@ -114,34 +118,46 @@ def analyze(df):
     if last["close"] > last["EMA200"]:
 
         long_score += 2
-        long_reasons.append("قیمت بالای EMA200")
+        long_reasons.append(
+            "قیمت بالای EMA200"
+        )
 
     elif last["close"] < last["EMA200"]:
 
         short_score += 2
-        short_reasons.append("قیمت زیر EMA200")
+        short_reasons.append(
+            "قیمت زیر EMA200"
+        )
 
     # EMA
     if last["EMA20"] > last["EMA50"]:
 
         long_score += 2
-        long_reasons.append("EMA20 بالای EMA50")
+        long_reasons.append(
+            "EMA20 بالای EMA50"
+        )
 
     elif last["EMA20"] < last["EMA50"]:
 
         short_score += 2
-        short_reasons.append("EMA20 زیر EMA50")
+        short_reasons.append(
+            "EMA20 زیر EMA50"
+        )
 
     # RSI
     if 50 <= last["RSI"] <= 65:
 
         long_score += 2
-        long_reasons.append("RSI مناسب LONG")
+        long_reasons.append(
+            "RSI مناسب LONG"
+        )
 
     elif 35 <= last["RSI"] < 50:
 
         short_score += 2
-        short_reasons.append("RSI مناسب SHORT")
+        short_reasons.append(
+            "RSI مناسب SHORT"
+        )
 
     # جلوگیری از ورود در اشباع شدید
     if last["RSI"] >= 75:
@@ -158,7 +174,9 @@ def analyze(df):
     ):
 
         long_score += 2
-        long_reasons.append("MACD صعودی")
+        long_reasons.append(
+            "MACD صعودی"
+        )
 
     elif (
         last["MACD"] < last["MACD_SIGNAL"]
@@ -167,7 +185,9 @@ def analyze(df):
     ):
 
         short_score += 2
-        short_reasons.append("MACD نزولی")
+        short_reasons.append(
+            "MACD نزولی"
+        )
 
     # VOLUME
     if last["volume"] > last["VOLUME_AVG"]:
@@ -175,14 +195,17 @@ def analyze(df):
         if long_score > short_score:
 
             long_score += 1
-            long_reasons.append("حجم تأییدکننده")
+            long_reasons.append(
+                "حجم تأییدکننده"
+            )
 
         elif short_score > long_score:
 
             short_score += 1
-            short_reasons.append("حجم تأییدکننده")
+            short_reasons.append(
+                "حجم تأییدکننده"
+            )
 
-    # امتیاز نهایی
     best_score = max(
         long_score,
         short_score
@@ -192,89 +215,14 @@ def analyze(df):
         long_score - short_score
     )
 
-    # امتیاز کافی نیست
-    if best_score < 6:
+    rsi_value = round(
+        float(last["RSI"]),
+        2
+    )
 
-        return {
-            "signal": "NO TRADE",
-            "score": best_score,
-            "confidence": min(
-                100,
-                max(0, best_score * 10)
-            ),
-            "rsi": round(
-                float(last["RSI"]),
-                2
-            ),
-            "price": float(last["close"]),
-            "atr": float(last["ATR"]),
-            "reason": "قدرت سیگنال کافی نیست"
-        }
+    price = float(
+        last["close"]
+    )
 
-    # اختلاف سیگنال‌ها کم است
-    if difference < 3:
-
-        return {
-            "signal": "NO TRADE",
-            "score": best_score,
-            "confidence": min(
-                100,
-                max(0, best_score * 10)
-            ),
-            "rsi": round(
-                float(last["RSI"]),
-                2
-            ),
-            "price": float(last["close"]),
-            "atr": float(last["ATR"]),
-            "reason": "تضاد بین سیگنال‌ها"
-        }
-
-    # LONG
-    if long_score > short_score:
-
-        return {
-            "signal": "LONG",
-            "score": long_score,
-            "confidence": min(
-                100,
-                long_score * 10
-            ),
-            "rsi": round(
-                float(last["RSI"]),
-                2
-            ),
-            "price": float(last["close"]),
-            "atr": float(last["ATR"]),
-            "reason": " | ".join(long_reasons)
-        }
-
-    # SHORT
-    if short_score > long_score:
-
-        return {
-            "signal": "SHORT",
-            "score": short_score,
-            "confidence": min(
-                100,
-                short_score * 10
-            ),
-            "rsi": round(
-                float(last["RSI"]),
-                2
-            ),
-            "price": float(last["close"]),
-            "atr": float(last["ATR"]),
-            "reason": " | ".join(short_reasons)
-        }
-
-    return {
-        "signal": "NO TRADE",
-        "score": best_score,
-        "confidence": 0,
-        "reason": "بازار نامشخص"
-    }
-
-
-if __name__ == "__main__":
-    print("Advanced Analysis Engine OK")
+    atr = float(
+        last["ATR"]
