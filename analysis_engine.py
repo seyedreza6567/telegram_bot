@@ -226,3 +226,106 @@ def analyze(df):
 
     atr = float(
         last["ATR"]
+    )
+
+    # اگر ATR معتبر نبود
+    if np.isnan(atr):
+
+        return {
+            "signal": "NO TRADE",
+            "score": best_score,
+            "confidence": 0,
+            "rsi": rsi_value,
+            "price": price,
+            "atr": 0,
+            "reason": "ATR معتبر نیست"
+        }
+
+    # امتیاز کافی نیست
+    if best_score < 6:
+
+        return {
+            "signal": "NO TRADE",
+            "score": best_score,
+            "confidence": min(
+                100,
+                max(0, best_score * 10)
+            ),
+            "rsi": rsi_value,
+            "price": price,
+            "atr": atr,
+            "reason": "قدرت سیگنال کافی نیست"
+        }
+
+    # اختلاف سیگنال‌ها کم است
+    if difference < 3:
+
+        return {
+            "signal": "NO TRADE",
+            "score": best_score,
+            "confidence": min(
+                100,
+                max(0, best_score * 10)
+            ),
+            "rsi": rsi_value,
+            "price": price,
+            "atr": atr,
+            "reason": "تضاد بین سیگنال‌ها"
+        }
+
+    # LONG
+    if long_score > short_score:
+
+        stop_loss = price - (atr * 2)
+        take_profit = price + (atr * 4)
+
+        return {
+            "signal": "LONG",
+            "score": long_score,
+            "confidence": min(
+                100,
+                long_score * 10
+            ),
+            "rsi": rsi_value,
+            "price": price,
+            "atr": atr,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "reason": " | ".join(long_reasons)
+        }
+
+    # SHORT
+    if short_score > long_score:
+
+        stop_loss = price + (atr * 2)
+        take_profit = price - (atr * 4)
+
+        return {
+            "signal": "SHORT",
+            "score": short_score,
+            "confidence": min(
+                100,
+                short_score * 10
+            ),
+            "rsi": rsi_value,
+            "price": price,
+            "atr": atr,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "reason": " | ".join(short_reasons)
+        }
+
+    return {
+        "signal": "NO TRADE",
+        "score": best_score,
+        "confidence": 0,
+        "rsi": rsi_value,
+        "price": price,
+        "atr": atr,
+        "reason": "بازار نامشخص"
+    }
+
+
+if __name__ == "__main__":
+
+    print("Advanced Analysis Engine OK")
