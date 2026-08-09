@@ -200,16 +200,17 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
         
-        if text == "⚙️ تنظیمات":
-        keyboard = [
-            ["🛡️ حالت محافظه‌کارانه"],
-            ["🎯 تأیید ۴ از ۵"],
-            ["📉 حد ضرر: ۲٪"],
-            ["📈 حد سود: ۴٪"],
-            ["💰 ریسک هر معامله: ۱٪"],
-            ["🤖 معاملات خودکار: خاموش"],
-            ["🔙 برگشت"]
-        ]
+       if text == "⚙️ تنظیمات":
+
+    keyboard = [
+        ["🛡️ حالت محافظه‌کارانه"],
+        ["🎯 تأیید ۴ از ۵"],
+        ["📉 حد ضرر: ۲٪"],
+        ["📈 حد سود: ۴٪"],
+        ["💰 ریسک هر معامله: ۱٪"],
+        ["🤖 معاملات خودکار: خاموش"],
+        ["🔙 برگشت"]
+    ]
         reply_markup = ReplyKeyboardMarkup(
             keyboard,
             resize_keyboard=True
