@@ -187,3 +187,238 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔎 در حال تحلیل BTC...\n"
             f"⏱️ تایم‌فریم: {interval}\n\n"
             f"لطفاً صبر کن..."
+        )
+
+        try:
+
+            df = get_klines(
+
+                symbol=SYMBOL,
+
+                interval=interval,
+
+                limit=250
+
+            )
+
+            if df is None:
+
+                await update.message.reply_text(
+
+                    "❌ دریافت اطلاعات بازار ناموفق بود."
+
+                )
+
+                return
+
+            result = analyze(df)
+
+            signal = result.get(
+
+                "signal",
+
+                "NO TRADE"
+
+            )
+
+            score = result.get(
+
+                "score",
+
+                0
+
+            )
+
+            confidence = result.get(
+
+                "confidence",
+
+                0
+
+            )
+
+            rsi = result.get(
+
+                "rsi",
+
+                "-"
+
+            )
+
+            price = result.get(
+
+                "price",
+
+                "-"
+
+            )
+
+            reason = result.get(
+
+                "reason",
+
+                "-"
+
+            )
+
+            if signal == "LONG":
+
+                emoji = "🟢"
+
+            elif signal == "SHORT":
+
+                emoji = "🔴"
+
+            else:
+
+                emoji = "⚪"
+
+            message = (
+
+                f"📊 BTC/USDT\n\n"
+
+                f"⏱️ تایم‌فریم: {interval}\n"
+
+                f"{emoji} سیگنال: {signal}\n\n"
+
+                f"⭐ امتیاز: {score}\n"
+
+                f"📈 قدرت شرایط: {confidence}%\n"
+
+                f"📊 RSI: {rsi}\n"
+
+                f"💰 قیمت: {price}\n\n"
+
+                f"📝 دلیل:\n{reason}\n\n"
+
+                "⚠️ فعلاً سفارش واقعی ارسال نمی‌شود."
+
+            )
+
+            await update.message.reply_text(
+
+                message
+
+            )
+
+        except Exception as e:
+
+            await update.message.reply_text(
+
+                f"❌ خطا در تحلیل:\n{e}"
+
+            )
+
+        return
+
+    # =========================
+
+    # قیمت
+
+    # =========================
+
+    if text == "💰 قیمت‌ها":
+
+        try:
+
+            df = get_klines(
+
+                symbol=SYMBOL,
+
+                interval="1h",
+
+                limit=5
+
+            )
+
+            if df is not None:
+
+                price = df[
+
+                    "close"
+
+                ].iloc[-1]
+
+                await update.message.reply_text(
+
+                    f"💰 قیمت BTC:\n\n{price}"
+
+                )
+
+            else:
+
+                await update.message.reply_text(
+
+                    "❌ دریافت قیمت ناموفق بود."
+
+                )
+
+        except Exception as e:
+
+            await update.message.reply_text(
+
+                f"❌ خطا:\n{e}"
+
+            )
+
+        return
+
+    # =========================
+
+    # تنظیمات
+
+    # =========================
+
+    if text == "⚙️ تنظیمات":
+
+        await update.message.reply_text(
+
+            "⚙️ تنظیمات ربات به‌زودی اضافه می‌شود."
+
+        )
+
+        return
+
+    # =========================
+
+    # برگشت
+
+    # =========================
+
+    if text == "🔙 برگشت":
+
+        await start(update, context)
+
+        return
+
+app = Application.builder().token(
+
+    BOT_TOKEN
+
+).build()
+
+app.add_handler(
+
+    CommandHandler(
+
+        "start",
+
+        start
+
+    )
+
+)
+
+app.add_handler(
+
+    MessageHandler(
+
+        filters.TEXT & ~filters.COMMAND,
+
+        messages
+
+    )
+
+)
+
+app.run_polling()
