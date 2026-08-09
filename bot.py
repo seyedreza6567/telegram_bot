@@ -45,10 +45,6 @@ async def messages(
 
     text = update.message.text
 
-    # =========================
-    # سیگنال‌ها
-    # =========================
-
     if text == "📈 سیگنال‌ها":
 
         keyboard = [
@@ -69,10 +65,6 @@ async def messages(
         )
 
         return
-
-    # =========================
-    # سیگنال نهایی
-    # =========================
 
     if text == "🔥 سیگنال نهایی":
 
@@ -103,8 +95,10 @@ async def messages(
 
             if signal == "LONG":
                 emoji = "🟢"
+
             elif signal == "SHORT":
                 emoji = "🔴"
+
             else:
                 emoji = "⚪"
 
@@ -177,4 +171,198 @@ async def messages(
         except Exception as e:
 
             await update.message.reply_text(
-                f"❌ خطا در تحلی
+                f"❌ خطا در تحلیل نهایی:\n{e}"
+            )
+
+        return
+        if text in [
+        "⏱️ 1H",
+        "⏱️ 2H",
+        "⏱️ 3H",
+        "⏱️ 4H",
+        "⏱️ 24H"
+    ]:
+
+        interval = text.replace(
+            "⏱️ ",
+            ""
+        ).lower()
+
+        if interval == "24h":
+            interval = "1d"
+
+        await update.message.reply_text(
+            f"🔎 در حال تحلیل BTC...\n"
+            f"⏱️ تایم‌فریم: {interval}\n\n"
+            "لطفاً صبر کن..."
+        )
+
+        try:
+
+            df = get_klines(
+                symbol=SYMBOL,
+                interval=interval,
+                limit=250
+            )
+
+            if df is None:
+
+                await update.message.reply_text(
+                    "❌ دریافت اطلاعات بازار ناموفق بود."
+                )
+
+                return
+
+            result = analyze(df)
+
+            signal = result.get(
+                "signal",
+                "NO TRADE"
+            )
+
+            score = result.get(
+                "score",
+                0
+            )
+
+            confidence = result.get(
+                "confidence",
+                0
+            )
+
+            rsi = result.get(
+                "rsi",
+                "-"
+            )
+
+            price = result.get(
+                "price",
+                "-"
+            )
+
+            atr = result.get(
+                "atr",
+                "-"
+            )
+
+            stop_loss = result.get(
+                "stop_loss",
+                None
+            )
+
+            take_profit = result.get(
+                "take_profit",
+                None
+            )
+
+            reason = result.get(
+                "reason",
+                "-"
+            )
+
+            if signal == "LONG":
+                emoji = "🟢"
+
+            elif signal == "SHORT":
+                emoji = "🔴"
+
+            else:
+                emoji = "⚪"
+
+            message = (
+                "📊 BTC/USDT\n\n"
+                f"⏱️ تایم‌فریم: {interval}\n"
+                f"{emoji} سیگنال: {signal}\n\n"
+                f"⭐ امتیاز: {score}\n"
+                f"📈 قدرت شرایط: {confidence}%\n"
+                f"📊 RSI: {rsi}\n"
+                f"💰 قیمت: {price}\n"
+                f"📏 ATR: {atr}\n"
+            )
+
+            if signal in ["LONG", "SHORT"]:
+
+                message += (
+                    f"\n🛑 حد ضرر: {stop_loss}\n"
+                    f"🎯 حد سود: {take_profit}\n"
+                )
+
+            message += (
+                f"\n📝 دلیل:\n{reason}\n\n"
+                "⚠️ فعلاً سفارش واقعی ارسال نمی‌شود."
+            )
+
+            await update.message.reply_text(
+                message
+            )
+
+        except Exception as e:
+
+            await update.message.reply_text(
+                f"❌ خطا در تحلیل:\n{e}"
+            )
+
+        return
+
+    if text == "💰 قیمت‌ها":
+
+        try:
+
+            df = get_klines(
+                symbol=SYMBOL,
+                interval="1h",
+                limit=5
+            )
+
+            if df is not None:
+
+                price = df["close"].iloc[-1]
+
+                await update.message.reply_text(
+                    f"💰 قیمت BTC:\n\n{price}"
+                )
+
+            else:
+
+                await update.message.reply_text(
+                    "❌ دریافت قیمت ناموفق بود."
+                )
+
+        except Exception as e:
+
+            await update.message.reply_text(
+                f"❌ خطا:\n{e}"
+            )
+
+        return
+
+    if text == "⚙️ تنظیمات":
+
+        keyboard = [
+            ["🛡️ حالت محافظه‌کارانه"],
+            ["🎯 تأیید ۴ از ۵"],
+            ["📉 حد ضرر: ۲٪"],
+            ["📈 حد سود: ۴٪"],
+            ["💰 ریسک هر معامله: ۱٪"],
+            ["🤖 معاملات خودکار: خاموش"],
+            ["🔙 برگشت"]
+        ]
+
+        reply_markup = ReplyKeyboardMarkup(
+            keyboard,
+            resize_keyboard=True
+        )
+
+        await update.message.reply_text(
+            "⚙️ تنظیمات ربات\n\n"
+            "🛡️ حالت محافظه‌کارانه فعال است.\n\n"
+            "تنظیم موردنظر را انتخاب کن:",
+            reply_markup=reply_markup
+        )
+
+        return
+
+    if text == "🔙 برگشت":
+
+        await start(
+            upd
