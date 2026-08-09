@@ -366,4 +366,8 @@ async def messages(
     if text == "🔙 برگشت":
 
         await start(
-            upd
+            update,
+            context
+        )
+
+        return
