@@ -5,7 +5,7 @@ import pandas as pd
 BASE_URL = "https://api.toobit.com"
 
 
-def get_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
+def _get_raw_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
 
     url = f"{BASE_URL}/quote/v1/klines"
 
@@ -16,7 +16,11 @@ def get_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
     }
 
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(
+            url,
+            params=params,
+            timeout=10
+        )
 
         print("STATUS:", r.status_code)
         print("RESPONSE:", r.text[:500])
@@ -43,7 +47,10 @@ def get_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
             "taker_buy_quote_volume"
         ]
 
-        df = pd.DataFrame(data, columns=columns)
+        df = pd.DataFrame(
+            data,
+            columns=columns
+        )
 
         numeric_columns = [
             "open",
@@ -54,7 +61,10 @@ def get_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
         ]
 
         for col in numeric_columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(
+                df[col],
+                errors="coerce"
+            )
 
         df["open_time"] = pd.to_datetime(
             df["open_time"],
@@ -66,20 +76,100 @@ def get_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
             unit="ms"
         )
 
-        return df
+        df = df.sort_values(
+            "open_time"
+        ).reset_index(drop=True)
 
+        return df
 
     except Exception as e:
         print("ERROR:", e)
         return None
 
 
+def _build_3h_from_1h(
+    symbol="BTC-SWAP-USDT",
+    limit=250
+):
+
+    df = _get_raw_klines(
+        symbol=symbol,
+        interval="1h",
+        limit=limit * 3
+    )
+
+    if df is None or len(df) < 3:
+        return None
+
+    df = df.set_index("open_time")
+
+    result = df.resample("3h").agg({
+        "open": "first",
+        "high": "max",
+        "low": "min",
+        "close": "last",
+        "volume": "sum",
+        "close_time": "last",
+        "quote_volume": "sum",
+        "trades": "sum",
+        "taker_buy_volume": "sum",
+        "taker_buy_quote_volume": "sum"
+    })
+
+    result = result.dropna(
+        subset=[
+            "open",
+            "high",
+            "low",
+            "close"
+        ]
+    )
+
+    result = result.reset_index()
+
+    return result.tail(limit).reset_index(
+        drop=True
+    )
+
+
+def get_klines(
+    symbol="BTC-SWAP-USDT",
+    interval="1h",
+    limit=200
+):
+
+    # 3H در API مستقیم Toobit وجود ندارد.
+    # بنابراین آن را از کندل‌های 1H می‌سازیم.
+
+    if interval.lower() == "3h":
+
+        print("ساخت تایم‌فریم 3H از کندل‌های 1H ...")
+
+        return _build_3h_from_1h(
+            symbol=symbol,
+            limit=limit
+        )
+
+    return _get_raw_klines(
+        symbol=symbol,
+        interval=interval,
+        limit=limit
+    )
+
+
 if __name__ == "__main__":
 
-    df = get_klines()
+    df = get_klines(
+        symbol="BTC-SWAP-USDT",
+        interval="3h",
+        limit=250
+    )
 
     if df is not None:
-        print("\nداده دریافت شد ✅")
+
+        print("\nداده 3H دریافت شد ✅")
         print(df.tail())
+
     else:
-        print("\nخطا در دریافت داده ❌")
+
+        print("\nخطا در دریافت داده 3H ❌")
