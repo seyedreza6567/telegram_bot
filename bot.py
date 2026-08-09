@@ -385,11 +385,31 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # =========================
 
-    if text == "🔙 برگشت":
+    if text == "⚙️ تنظیمات":
 
-        await start(update, context)
+    keyboard = [
+        ["🛡️ حالت محافظه‌کارانه"],
+        ["🎯 تأیید ۴ از ۵"],
+        ["📉 حد ضرر: ۲٪"],
+        ["📈 حد سود: ۴٪"],
+        ["💰 ریسک هر معامله: ۱٪"],
+        ["🤖 معاملات خودکار: خاموش"],
+        ["🔙 برگشت"]
+    ]
 
-        return
+    reply_markup = ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True
+    )
+
+    await update.message.reply_text(
+        "⚙️ تنظیمات ربات\n\n"
+        "🛡️ حالت محافظه‌کارانه فعال است.\n\n"
+        "تنظیم موردنظر را انتخاب کن:",
+        reply_markup=reply_markup
+    )
+
+    return
 
 app = Application.builder().token(
 
