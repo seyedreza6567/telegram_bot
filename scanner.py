@@ -5,9 +5,9 @@ import pandas as pd
 BASE_URL = "https://api.toobit.com"
 
 
-def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
+def get_klines(symbol="BTC-SWAP-USDT", interval="1h", limit=200):
 
-    url = f"{BASE_URL}/api/v1/market/kline"
+    url = f"{BASE_URL}/quote/v1/klines"
 
     params = {
         "symbol": symbol,
@@ -21,14 +21,53 @@ def get_klines(symbol="BTCUSDT", interval="1h", limit=200):
         print("STATUS:", r.status_code)
         print("RESPONSE:", r.text[:500])
 
+        r.raise_for_status()
+
         data = r.json()
 
-        if "data" not in data:
+        if not isinstance(data, list) or len(data) == 0:
+            print("داده کندل دریافت نشد")
             return None
 
-        df = pd.DataFrame(data["data"])
+        columns = [
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time",
+            "quote_volume",
+            "trades",
+            "taker_buy_volume",
+            "taker_buy_quote_volume"
+        ]
+
+        df = pd.DataFrame(data, columns=columns)
+
+        numeric_columns = [
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume"
+        ]
+
+        for col in numeric_columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        df["open_time"] = pd.to_datetime(
+            df["open_time"],
+            unit="ms"
+        )
+
+        df["close_time"] = pd.to_datetime(
+            df["close_time"],
+            unit="ms"
+        )
 
         return df
+
 
     except Exception as e:
         print("ERROR:", e)
@@ -40,6 +79,7 @@ if __name__ == "__main__":
     df = get_klines()
 
     if df is not None:
-        print(df.head())
+        print("\nداده دریافت شد ✅")
+        print(df.tail())
     else:
-        print("خطا در دریافت داده")
+        print("\nخطا در دریافت داده ❌")
