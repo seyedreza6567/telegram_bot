@@ -3,7 +3,10 @@ import numpy as np
 
 
 def calculate_ema(df, period):
-    return df["close"].ewm(span=period, adjust=False).mean()
+    return df["close"].ewm(
+        span=period,
+        adjust=False
+    ).mean()
 
 
 def calculate_rsi(df, period=14):
@@ -12,8 +15,15 @@ def calculate_rsi(df, period=14):
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
 
-    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
-    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
+    avg_gain = gain.ewm(
+        alpha=1 / period,
+        adjust=False
+    ).mean()
+
+    avg_loss = loss.ewm(
+        alpha=1 / period,
+        adjust=False
+    ).mean()
 
     rs = avg_gain / avg_loss.replace(0, np.nan)
 
@@ -21,20 +31,39 @@ def calculate_rsi(df, period=14):
 
 
 def calculate_macd(df):
-    ema12 = df["close"].ewm(span=12, adjust=False).mean()
-    ema26 = df["close"].ewm(span=26, adjust=False).mean()
+    ema12 = df["close"].ewm(
+        span=12,
+        adjust=False
+    ).mean()
+
+    ema26 = df["close"].ewm(
+        span=26,
+        adjust=False
+    ).mean()
 
     macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
+
+    signal = macd.ewm(
+        span=9,
+        adjust=False
+    ).mean()
+
     histogram = macd - signal
 
     return macd, signal, histogram
 
 
 def calculate_atr(df, period=14):
+
     high_low = df["high"] - df["low"]
-    high_close = (df["high"] - df["close"].shift()).abs()
-    low_close = (df["low"] - df["close"].shift()).abs()
+
+    high_close = (
+        df["high"] - df["close"].shift()
+    ).abs()
+
+    low_close = (
+        df["low"] - df["close"].shift()
+    ).abs()
 
     true_range = pd.concat(
         [high_low, high_close, low_close],
@@ -69,6 +98,7 @@ def analyze(df):
     df["MACD_HIST"] = histogram
 
     df["ATR"] = calculate_atr(df)
+
     df["VOLUME_AVG"] = df["volume"].rolling(20).mean()
 
     last = df.iloc[-1]
@@ -80,34 +110,40 @@ def analyze(df):
     long_reasons = []
     short_reasons = []
 
-    # Trend
+    # TREND
     if last["close"] > last["EMA200"]:
+
         long_score += 2
         long_reasons.append("قیمت بالای EMA200")
 
     elif last["close"] < last["EMA200"]:
+
         short_score += 2
         short_reasons.append("قیمت زیر EMA200")
 
     # EMA
     if last["EMA20"] > last["EMA50"]:
+
         long_score += 2
         long_reasons.append("EMA20 بالای EMA50")
 
     elif last["EMA20"] < last["EMA50"]:
+
         short_score += 2
         short_reasons.append("EMA20 زیر EMA50")
 
     # RSI
     if 50 <= last["RSI"] <= 65:
+
         long_score += 2
         long_reasons.append("RSI مناسب LONG")
 
     elif 35 <= last["RSI"] < 50:
+
         short_score += 2
         short_reasons.append("RSI مناسب SHORT")
 
-    # اشباع شدید
+    # جلوگیری از ورود در اشباع شدید
     if last["RSI"] >= 75:
         long_score -= 2
 
@@ -117,49 +153,58 @@ def analyze(df):
     # MACD
     if (
         last["MACD"] > last["MACD_SIGNAL"]
-        and last["MACD_HIST"] > previous["MACD_HIST"]
+        and
+        last["MACD_HIST"] > previous["MACD_HIST"]
     ):
+
         long_score += 2
         long_reasons.append("MACD صعودی")
 
     elif (
         last["MACD"] < last["MACD_SIGNAL"]
-        and last["MACD_HIST"] < previous["MACD_HIST"]
+        and
+        last["MACD_HIST"] < previous["MACD_HIST"]
     ):
+
         short_score += 2
         short_reasons.append("MACD نزولی")
 
-    # Volume
+    # VOLUME
     if last["volume"] > last["VOLUME_AVG"]:
 
         if long_score > short_score:
+
             long_score += 1
             long_reasons.append("حجم تأییدکننده")
 
         elif short_score > long_score:
+
             short_score += 1
             short_reasons.append("حجم تأییدکننده")
 
-    best_score = max(long_score, short_score)
-    difference = abs(long_score - short_score)
+    # امتیاز نهایی
+    best_score = max(
+        long_score,
+        short_score
+    )
+
+    difference = abs(
+        long_score - short_score
+    )
 
     # امتیاز کافی نیست
     if best_score < 6:
-        return {
-            "signal": "NO TRADE",
-            "score": best_score,
-            "confidence": min(100, max(0, best_score * 10)),
-            "rsi": round(float(last["RSI"]), 2),
-            "price": float(last["close"]),
-            "atr": float(last["ATR"]),
-            "reason": "قدرت سیگنال کافی نیست"
-        }
 
-    # اختلاف سیگنال‌ها کم است
-    if difference < 3:
         return {
             "signal": "NO TRADE",
             "score": best_score,
-            "confidence": min(100, max(0, best_score * 10)),
-            "rsi": round(float(last["RSI"]), 2),
-            "price": float(last["close"])
+            "confidence": min(
+                100,
+                max(0, best_score * 10)
+            ),
+            "rsi": round(
+                float(last["RSI"]),
+                2
+            ),
+            "price": float(last["close"]),
+            "atr": flo
