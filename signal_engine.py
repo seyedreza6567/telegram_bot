@@ -1,4 +1,5 @@
 from multi_timeframe import analyze_timeframes
+from risk_manager import calculate_risk
 
 
 def final_signal(symbol="BTC-SWAP-USDT"):
@@ -48,12 +49,44 @@ def final_signal(symbol="BTC-SWAP-USDT"):
 
         final = "NO TRADE"
 
+    # --------------------------------
+    # قیمت ورود
+    # --------------------------------
+
+    entry_price = None
+
+    for timeframe in ["1h", "2h", "3h", "4h", "1d"]:
+
+        data = results.get(timeframe, {})
+
+        price = data.get("price")
+
+        if price is not None:
+
+            entry_price = float(price)
+
+            break
+
+    # --------------------------------
+    # مدیریت ریسک
+    # --------------------------------
+
+    risk = calculate_risk(
+        entry_price=entry_price if entry_price else 0,
+        signal=final,
+        risk_percent=1.0,
+        stop_loss_percent=2.0,
+        take_profit_percent=4.0
+    )
+
     return {
         "signal": final,
         "long_count": long_count,
         "short_count": short_count,
         "long_score": long_score,
         "short_score": short_score,
+        "entry_price": entry_price,
+        "risk": risk,
         "timeframes": results
     }
 
@@ -66,9 +99,37 @@ if __name__ == "__main__":
     print("FINAL SIGNAL")
     print("==========================")
 
-    print("Signal:", result["signal"])
-    print("LONG:", result["long_count"])
-    print("SHORT:", result["short_count"])
+    print(
+        "Signal:",
+        result["signal"]
+    )
 
-    print("LONG SCORE:", result["long_score"])
-    print("SHORT SCORE:", result["short_score"])
+    print(
+        "LONG:",
+        result["long_count"]
+    )
+
+    print(
+        "SHORT:",
+        result["short_count"]
+    )
+
+    print(
+        "LONG SCORE:",
+        result["long_score"]
+    )
+
+    print(
+        "SHORT SCORE:",
+        result["short_score"]
+    )
+
+    print(
+        "ENTRY:",
+        result["entry_price"]
+    )
+
+    print(
+        "RISK:",
+        result["risk"]
+    )
