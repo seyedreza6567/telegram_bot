@@ -9,6 +9,10 @@ from telegram.ext import (
 
 from config import BOT_TOKEN
 from scanner import get_klines
+from analysis_engine import analyze
+
+
+SYMBOL = "BTC-SWAP-USDT"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33,6 +37,10 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
 
+    # -------------------------
+    # سیگنال‌ها
+    # -------------------------
+
     if text == "📈 سیگنال‌ها":
 
         keyboard = [
@@ -48,69 +56,145 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         await update.message.reply_text(
-            "تایم‌فریم را انتخاب کن:",
+            "⏱️ تایم‌فریم موردنظر را انتخاب کن:",
             reply_markup=reply_markup
         )
 
-    elif text in ["⏱️ 1H", "⏱️ 2H", "⏱️ 3H", "⏱️ 4H", "⏱️ 24H"]:
+        return
+
+    # -------------------------
+    # تحلیل تایم‌فریم
+    # -------------------------
+
+    if text in [
+        "⏱️ 1H",
+        "⏱️ 2H",
+        "⏱️ 3H",
+        "⏱️ 4H",
+        "⏱️ 24H"
+    ]:
 
         interval = text.replace("⏱️ ", "").lower()
 
-        df = get_klines(interval=interval)
+        if interval == "24h":
+            interval = "1d"
 
-        if df is not None:
-            price = df["close"].iloc[-1]
+        await update.message.reply_text(
+            f"🔎 در حال تحلیل BTC...\n"
+            f"⏱️ تایم‌فریم: {interval}\n\n"
+            f"لطفاً چند لحظه صبر کن..."
+        )
 
-            await update.message.reply_text(
-                f"📊 تحلیل BTC/USDT\n\n"
-                f"⏱️ تایم‌فریم: {interval}\n"
-                f"💰 قیمت آخر: {price}\n\n"
-                "⏳ موتور تحلیل و اندیکاتورها در حال ساخت است..."
-            )
+        df = get_klines(
+            symbol=SYMBOL,
+            interval=interval,
+            limit=250
+        )
 
-        else:
+        if df is None:
+
             await update.message.reply_text(
                 "❌ دریافت اطلاعات بازار ناموفق بود."
             )
 
+            return
 
-    elif text == "💰 قیمت‌ها":
+        result = analyze(df)
 
-        df = get_klines()
+        signal = result.get("signal", "NO TRADE")
+        score = result.get("score", 0)
+        confidence = result.get("confidence", 0)
+        rsi = result.get("rsi", "-")
+        price = result.get("price", "-")
+        reason = result.get("reason", "-")
+
+        if signal == "LONG":
+
+            emoji = "🟢"
+
+        elif signal == "SHORT":
+
+            emoji = "🔴"
+
+        else:
+
+            emoji = "⚪"
+
+        message = (
+            f"📊 BTC/USDT\n\n"
+            f"⏱️ تایم‌فریم: {interval}\n"
+            f"{emoji} سیگنال: {signal}\n\n"
+            f"⭐ امتیاز: {score}\n"
+            f"📈 قدرت شرایط: {confidence}%\n"
+            f"📊 RSI: {rsi}\n"
+            f"💰 قیمت: {price}\n\n"
+            f"📝 دلیل:\n{reason}\n\n"
+            f"⚠️ این تحلیل توصیه مالی نیست."
+        )
+
+        await update.message.reply_text(message)
+
+        return
+
+    # -------------------------
+    # قیمت
+    # -------------------------
+
+    if text == "💰 قیمت‌ها":
+
+        df = get_klines(
+            symbol=SYMBOL,
+            interval="1h",
+            limit=5
+        )
 
         if df is not None:
+
             price = df["close"].iloc[-1]
 
             await update.message.reply_text(
-                f"💰 قیمت BTC/USDT:\n{price}"
+                f"💰 قیمت BTC:\n\n"
+                f"{price}"
             )
+
         else:
+
             await update.message.reply_text(
                 "❌ دریافت قیمت ناموفق بود."
             )
 
+        return
 
-    elif text == "⚙️ تنظیمات":
+    # -------------------------
+    # تنظیمات
+    # -------------------------
+
+    if text == "⚙️ تنظیمات":
 
         await update.message.reply_text(
             "⚙️ تنظیمات ربات به‌زودی اضافه می‌شود."
         )
 
+        return
 
-    elif text == "🔙 برگشت":
+    # -------------------------
+    # برگشت
+    # -------------------------
+
+    if text == "🔙 برگشت":
 
         await start(update, context)
 
+        return
 
 
 app = Application.builder().token(BOT_TOKEN).build()
 
-
-app.add_handler(CommandHandler("start", start))
-
 app.add_handler(
-    MessageHandler(filters.TEXT & ~filters.COMMAND, messages)
+    CommandHandler("start", start)
 )
 
-
-app.run_polling()
+app.add_handler(
+    MessageHandler(
+        filters.TEXT & ~filters.COMMAND,
+        messages
