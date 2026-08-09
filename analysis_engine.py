@@ -207,4 +207,74 @@ def analyze(df):
                 2
             ),
             "price": float(last["close"]),
-            "atr": flo
+            "atr": float(last["ATR"]),
+            "reason": "قدرت سیگنال کافی نیست"
+        }
+
+    # اختلاف سیگنال‌ها کم است
+    if difference < 3:
+
+        return {
+            "signal": "NO TRADE",
+            "score": best_score,
+            "confidence": min(
+                100,
+                max(0, best_score * 10)
+            ),
+            "rsi": round(
+                float(last["RSI"]),
+                2
+            ),
+            "price": float(last["close"]),
+            "atr": float(last["ATR"]),
+            "reason": "تضاد بین سیگنال‌ها"
+        }
+
+    # LONG
+    if long_score > short_score:
+
+        return {
+            "signal": "LONG",
+            "score": long_score,
+            "confidence": min(
+                100,
+                long_score * 10
+            ),
+            "rsi": round(
+                float(last["RSI"]),
+                2
+            ),
+            "price": float(last["close"]),
+            "atr": float(last["ATR"]),
+            "reason": " | ".join(long_reasons)
+        }
+
+    # SHORT
+    if short_score > long_score:
+
+        return {
+            "signal": "SHORT",
+            "score": short_score,
+            "confidence": min(
+                100,
+                short_score * 10
+            ),
+            "rsi": round(
+                float(last["RSI"]),
+                2
+            ),
+            "price": float(last["close"]),
+            "atr": float(last["ATR"]),
+            "reason": " | ".join(short_reasons)
+        }
+
+    return {
+        "signal": "NO TRADE",
+        "score": best_score,
+        "confidence": 0,
+        "reason": "بازار نامشخص"
+    }
+
+
+if __name__ == "__main__":
+    print("Advanced Analysis Engine OK")
