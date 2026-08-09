@@ -199,6 +199,7 @@ async def messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"❌ خطا:\n{e}"
             )
         return
+        
         if text == "⚙️ تنظیمات":
         keyboard = [
             ["🛡️ حالت محافظه‌کارانه"],
