@@ -248,7 +248,6 @@ if text in [
 
         return
 
-
     if text == "💰 قیمت‌ها":
 
         try:
@@ -280,7 +279,8 @@ if text in [
             )
 
         return
-        if text == "⚙️ تنظیمات":
+        
+    if text == "⚙️ تنظیمات":
 
         keyboard = [
             ["🛡️ حالت محافظه‌کارانه"],
@@ -305,7 +305,6 @@ if text in [
         )
 
         return
-
 
     if text == "🔙 برگشت":
 
