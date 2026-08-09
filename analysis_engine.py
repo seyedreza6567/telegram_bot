@@ -196,4 +196,4 @@ def analyze(df):
 
     difference = abs(long_score - short_score)
 
-    best_score = max(long_scor
+    best_score = max(long_scor)
