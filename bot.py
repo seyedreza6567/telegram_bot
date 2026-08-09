@@ -16,7 +16,10 @@ from signal_engine import final_signal
 SYMBOL = "BTC-SWAP-USDT"
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     keyboard = [
         ["📈 سیگنال‌ها", "🔥 سیگنال نهایی"],
@@ -42,6 +45,10 @@ async def messages(
 
     text = update.message.text
 
+    # =========================
+    # سیگنال‌ها
+    # =========================
+
     if text == "📈 سیگنال‌ها":
 
         keyboard = [
@@ -63,6 +70,9 @@ async def messages(
 
         return
 
+    # =========================
+    # سیگنال نهایی
+    # =========================
 
     if text == "🔥 سیگنال نهایی":
 
@@ -93,10 +103,8 @@ async def messages(
 
             if signal == "LONG":
                 emoji = "🟢"
-
             elif signal == "SHORT":
                 emoji = "🔴"
-
             else:
                 emoji = "⚪"
 
@@ -129,6 +137,35 @@ async def messages(
                     f" | Score: {score}"
                 )
 
+                if tf_signal in ["LONG", "SHORT"]:
+
+                    price = data.get(
+                        "price",
+                        "-"
+                    )
+
+                    atr = data.get(
+                        "atr",
+                        "-"
+                    )
+
+                    stop_loss = data.get(
+                        "stop_loss",
+                        "-"
+                    )
+
+                    take_profit = data.get(
+                        "take_profit",
+                        "-"
+                    )
+
+                    message += (
+                        f"\n   💰 قیمت: {price}"
+                        f"\n   📏 ATR: {atr}"
+                        f"\n   🛑 حد ضرر: {stop_loss}"
+                        f"\n   🎯 حد سود: {take_profit}"
+                    )
+
             message += (
                 "\n\n⚠️ سفارش واقعی ارسال نمی‌شود."
             )
@@ -140,57 +177,4 @@ async def messages(
         except Exception as e:
 
             await update.message.reply_text(
-                f"❌ خطا در تحلیل نهایی:\n{e}"
-            )
-
-        return
-
-    if text in [
-        "⏱️ 1H",
-        "⏱️ 2H",
-        "⏱️ 3H",
-        "⏱️ 4H",
-        "⏱️ 24H"
-    ]:
-
-        interval = text.replace(
-            "⏱️ ",
-            ""
-        ).lower()
-
-        if interval == "24h":
-            interval = "1d"
-
-        await update.message.reply_text(
-            f"🔎 در حال تحلیل BTC...\n"
-            f"⏱️ تایم‌فریم: {interval}\n\n"
-            "لطفاً صبر کن..."
-        )
-
-        try:
-
-            df = get_klines(
-                symbol=SYMBOL,
-                interval=interval,
-                limit=250
-            )
-
-            if df is None:
-
-                await update.message.reply_text(
-                    "❌ دریافت اطلاعات بازار ناموفق بود."
-                )
-
-                return
-
-            result = analyze(df)
-
-            signal = result.get(
-                "signal",
-                "NO TRADE"
-            )
-
-            score = result.get(
-    "score",
-    0
-)
+                f"❌ خطا در تحلی
