@@ -191,4 +191,6 @@ async def messages(
             )
 
             score = result.get(
-                "score",
+    "score",
+    0
+)
