@@ -41,6 +41,5 @@ if __name__ == "__main__":
 
     if df is not None:
         print(df.head())
-
     else:
         print("خطا در دریافت داده")
