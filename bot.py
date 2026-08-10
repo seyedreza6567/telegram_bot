@@ -248,7 +248,7 @@ async def messages(
         return
 
         if text == "💰 قیمت‌ها":
-        try:
+            try:
             df = get_klines(
                 symbol=SYMBOL,
                 interval="1h",
