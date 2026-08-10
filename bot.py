@@ -248,7 +248,9 @@ async def messages(
         return
 
         if text == "💰 قیمت‌ها":
-            try:
+
+        try:
+
             df = get_klines(
                 symbol=SYMBOL,
                 interval="1h",
@@ -256,17 +258,21 @@ async def messages(
             )
 
             if df is not None:
+
                 price = df["close"].iloc[-1]
 
                 await update.message.reply_text(
                     f"💰 قیمت BTC:\n\n{price}"
                 )
+
             else:
+
                 await update.message.reply_text(
                     "❌ دریافت قیمت ناموفق بود."
                 )
 
         except Exception as e:
+
             await update.message.reply_text(
                 f"❌ خطا:\n{e}"
             )
