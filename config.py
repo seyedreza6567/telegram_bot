@@ -1,6 +1,6 @@
 import os
 
-BOT_TOKEN = os.getenv("8656837062:AAGmm2MXqu_vCTjTH0jY93oBVHsVDmT6NpQ")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 TOOBIT_API_KEY = "Xc4VH0Luc25sOY12hgzMG2pF90kZ1ITfabp8w1ecZ8km4zq2zkeo0fj3JJLFiaNU"
 
