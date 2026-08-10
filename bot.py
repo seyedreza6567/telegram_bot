@@ -63,7 +63,6 @@ async def messages(
 
         return
 
-
     if text == "🔥 سیگنال نهایی":
         await update.message.reply_text(
             "🔎 در حال بررسی ۵ تایم‌فریم...\n\n"
@@ -130,7 +129,6 @@ async def messages(
             )
 
         return
-
 
     if text in [
         "⏱️ 1H",
@@ -274,7 +272,6 @@ async def messages(
 
         return
 
-
     if text == "⚙️ تنظیمات":
         keyboard = [
             ["🛡️ حالت محافظه‌کارانه"],
@@ -299,7 +296,6 @@ async def messages(
         )
 
         return
-
 
     if text == "🔙 برگشت":
         await start(update, context)
