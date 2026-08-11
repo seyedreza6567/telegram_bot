@@ -9,32 +9,49 @@ BASE_URL = "https://api.toobit.com"
 # =========================================================
 
 def get_futures_symbols():
+
     url = f"{BASE_URL}/api/v1/exchangeInfo"
 
     try:
+
         r = requests.get(
             url,
             timeout=10
         )
 
-        print("EXCHANGE INFO STATUS:", r.status_code)
+        print(
+            "EXCHANGE INFO STATUS:",
+            r.status_code
+        )
 
         r.raise_for_status()
 
         data = r.json()
 
-        contracts = data.get("contracts", [])
+        contracts = data.get(
+            "contracts",
+            []
+        )
 
         if not contracts:
-            print("هیچ قرارداد Futures پیدا نشد ❌")
+
+            print(
+                "هیچ قرارداد Futures پیدا نشد ❌"
+            )
+
             return []
 
         symbols = []
 
         for contract in contracts:
 
-            symbol = contract.get("symbol")
-            status = contract.get("status")
+            symbol = contract.get(
+                "symbol"
+            )
+
+            status = contract.get(
+                "status"
+            )
 
             if not symbol:
                 continue
@@ -48,12 +65,51 @@ def get_futures_symbols():
                 continue
 
             if symbol.endswith("-USDT"):
-                symbols.append(symbol)
 
-        symbols = sorted(set(symbols))
+                symbols.append(
+                    symbol
+                )
+
+        symbols = sorted(
+            set(symbols)
+        )
 
         print(
             f"تعداد قراردادهای Futures فعال: {len(symbols)}"
+        )
+
+        # =================================================
+        # تست پیدا کردن ارزهای مهم
+        # =================================================
+
+        btc_symbols = [
+            x for x in symbols
+            if "BTC" in x.upper()
+        ]
+
+        eth_symbols = [
+            x for x in symbols
+            if "ETH" in x.upper()
+        ]
+
+        bnb_symbols = [
+            x for x in symbols
+            if "BNB" in x.upper()
+        ]
+
+        print(
+            "BTC:",
+            btc_symbols
+        )
+
+        print(
+            "ETH:",
+            eth_symbols
+        )
+
+        print(
+            "BNB:",
+            bnb_symbols
         )
 
         return symbols
@@ -69,7 +125,7 @@ def get_futures_symbols():
 
 
 # =========================================================
-# فیلتر اولیه قراردادهای مناسب
+# دریافت لیست قراردادهای مناسب برای نمایش
 # =========================================================
 
 def get_filtered_futures_symbols():
@@ -77,6 +133,7 @@ def get_filtered_futures_symbols():
     symbols = get_futures_symbols()
 
     if not symbols:
+
         return []
 
     filtered = []
@@ -85,25 +142,84 @@ def get_filtered_futures_symbols():
 
         upper_symbol = symbol.upper()
 
-        # قراردادهای بسیار خاص با چندین صفر در نام
-        # فعلاً حذف می‌شوند تا لیست اولیه تمیزتر باشد.
+        # فعلاً فقط قراردادهای بسیار عجیب
+        # با تعداد صفرهای زیاد حذف شوند
+
         if upper_symbol.startswith(
             (
-                "1000",
-                "10000",
+                "1000000",
                 "100000",
-                "1000000"
+                "10000",
+                "1000"
             )
         ):
             continue
 
-        filtered.append(symbol)
+        filtered.append(
+            symbol
+        )
+
+    # =====================================================
+    # ارزهای مهم همیشه در ابتدای لیست
+    # =====================================================
+
+    priority = [
+        "BTC-SWAP-USDT",
+        "ETH-SWAP-USDT",
+        "BNB-SWAP-USDT",
+        "SOL-SWAP-USDT",
+        "XRP-SWAP-USDT",
+        "DOGE-SWAP-USDT",
+        "ADA-SWAP-USDT",
+        "TRX-SWAP-USDT",
+        "AVAX-SWAP-USDT",
+        "LINK-SWAP-USDT",
+        "DOT-SWAP-USDT",
+        "LTC-SWAP-USDT",
+        "BCH-SWAP-USDT",
+        "UNI-SWAP-USDT",
+        "SUI-SWAP-USDT"
+    ]
+
+    final_symbols = []
+
+    # اول ارزهای مهمی که واقعاً
+    # در لیست Toobit وجود دارند
+
+    for priority_symbol in priority:
+
+        if priority_symbol in filtered:
+
+            final_symbols.append(
+                priority_symbol
+            )
+
+    # بعد بقیه ارزها
+
+    for symbol in filtered:
+
+        if symbol not in final_symbols:
+
+            final_symbols.append(
+                symbol
+            )
 
     print(
-        f"تعداد قراردادهای بعد از فیلتر: {len(filtered)}"
+        f"تعداد قراردادهای بعد از فیلتر: "
+        f"{len(final_symbols)}"
     )
 
-    return filtered
+    print(
+        "ارزهای مهم موجود:"
+    )
+
+    for symbol in final_symbols[:20]:
+
+        print(
+            symbol
+        )
+
+    return final_symbols
 
 
 # =========================================================
@@ -132,8 +248,15 @@ def _get_raw_klines(
             timeout=10
         )
 
-        print("STATUS:", r.status_code)
-        print("RESPONSE:", r.text[:500])
+        print(
+            "STATUS:",
+            r.status_code
+        )
+
+        print(
+            "RESPONSE:",
+            r.text[:500]
+        )
 
         r.raise_for_status()
 
@@ -141,7 +264,9 @@ def _get_raw_klines(
 
         if not isinstance(data, list) or len(data) == 0:
 
-            print("داده کندل دریافت نشد")
+            print(
+                "داده کندل دریافت نشد"
+            )
 
             return None
 
@@ -311,13 +436,17 @@ if __name__ == "__main__":
 
     for symbol in symbols[:20]:
 
-        print(symbol)
+        print(
+            symbol
+        )
 
     print(
         "\nدر حال اعمال فیلتر..."
     )
 
-    filtered_symbols = get_filtered_futures_symbols()
+    filtered_symbols = (
+        get_filtered_futures_symbols()
+    )
 
     print(
         "\nچند قرارداد فیلترشده:"
@@ -325,7 +454,9 @@ if __name__ == "__main__":
 
     for symbol in filtered_symbols[:20]:
 
-        print(symbol)
+        print(
+            symbol
+        )
 
     print(
         "\nتست دریافت BTC..."
