@@ -15,7 +15,7 @@ from analysis_engine import analyze
 from signal_engine import final_signal
 SYMBOL = "BTC-SWAP-USDT"
 # =========================================================
-# ارزهای مهم برای اسکن سریع
+# ارزهای مهم
 # =========================================================
 PRIORITY_SYMBOLS = [
     "BTC-SWAP-USDT",
@@ -34,6 +34,19 @@ PRIORITY_SYMBOLS = [
     "UNI-SWAP-USDT",
     "SUI-SWAP-USDT",
 ]
+# =========================================================
+# تایم‌فریم‌های اسکن
+# =========================================================
+SCAN_TIMEFRAMES = [
+    "1h",
+    "2h",
+    "3h",
+    "4h",
+    "1d",
+]
+# =========================================================
+# منوی اصلی
+# =========================================================
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -53,15 +66,15 @@ async def start(
         reply_markup=reply_markup
     )
 # =========================================================
-# اسکن بازار
+# اسکن چندتایم‌فریمی بازار
 # =========================================================
 async def scan_market(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
     await update.message.reply_text(
-        "🔎 در حال اسکن بازار Futures...\n\n"
-        "ارزهای مهم Toobit بررسی می‌شوند.\n"
+        "🔎 در حال اسکن چندتایم‌فریمی بازار Futures...\n\n"
+        "⏱️ 1H → 2H → 3H → 4H → 1D\n\n"
         "لطفاً صبر کن..."
     )
     try:
@@ -73,7 +86,6 @@ async def scan_market(
                 "❌ لیست Futures دریافت نشد."
             )
             return
-        # فقط ارزهایی که واقعاً در Toobit موجود هستند
         symbols = [
             symbol
             for symbol in PRIORITY_SYMBOLS
@@ -81,68 +93,161 @@ async def scan_market(
         ]
         if not symbols:
             await update.message.reply_text(
-                "❌ ارزهای مهم موردنظر در بازار Futures پیدا نشدند."
+                "❌ ارزهای مهم پیدا نشدند."
             )
             return
-        results = []
+        final_results = []
+        # =================================================
+        # بررسی هر ارز
+        # =================================================
         for symbol in symbols:
-            try:
-                df = get_klines(
-                    symbol=symbol,
-                    interval="1h",
-                    limit=250
+            print(
+                f"\n========== {symbol} =========="
+            )
+            timeframe_results = {}
+            long_count = 0
+            short_count = 0
+            total_score = 0
+            valid_count = 0
+            last_price = "-"
+            # =============================================
+            # بررسی ۵ تایم‌فریم
+            # =============================================
+            for timeframe in SCAN_TIMEFRAMES:
+                try:
+                    df = get_klines(
+                        symbol=symbol,
+                        interval=timeframe,
+                        limit=250
+                    )
+                    if df is None or len(df) < 50:
+                        timeframe_results[
+                            timeframe
+                        ] = {
+                            "signal": "NO TRADE",
+                            "score": 0,
+                            "confidence": 0,
+                        }
+                        continue
+                    result = analyze(df)
+                    signal = result.get(
+                        "signal",
+                        "NO TRADE"
+                    )
+                    score = result.get(
+                        "score",
+                        0
+                    )
+                    confidence = result.get(
+                        "confidence",
+                        0
+                    )
+                    price = result.get(
+                        "price",
+                        "-"
+                    )
+                    last_price = price
+                    timeframe_results[
+                        timeframe
+                    ] = {
+                        "signal": signal,
+                        "score": score,
+                        "confidence": confidence,
+                    }
+                    valid_count += 1
+                    total_score += score
+                    if signal == "LONG":
+                        long_count += 1
+                    elif signal == "SHORT":
+                        short_count += 1
+                except Exception as e:
+                    print(
+                        f"TIMEFRAME ERROR "
+                        f"{symbol} {timeframe}:",
+                        e
+                    )
+                    timeframe_results[
+                        timeframe
+                    ] = {
+                        "signal": "NO TRADE",
+                        "score": 0,
+                        "confidence": 0,
+                    }
+            # =============================================
+            # تعیین جهت نهایی
+            # =============================================
+            if long_count > short_count:
+                final_direction = "LONG"
+                confirmation = long_count
+            elif short_count > long_count:
+                final_direction = "SHORT"
+                confirmation = short_count
+            else:
+                final_direction = "NO TRADE"
+                confirmation = 0
+            # =============================================
+            # قدرت تأیید
+            # =============================================
+            confirmation_percent = (
+                confirmation / len(SCAN_TIMEFRAMES)
+            ) * 100
+            average_score = 0
+            if valid_count > 0:
+                average_score = (
+                    total_score / valid_count
                 )
-                if df is None or len(df) < 50:
-                    continue
-                result = analyze(df)
-                signal = result.get(
-                    "signal",
-                    "NO TRADE"
-                )
-                score = result.get(
-                    "score",
-                    0
-                )
-                confidence = result.get(
-                    "confidence",
-                    0
-                )
-                price = result.get(
-                    "price",
-                    "-"
-                )
-                results.append({
+            # =============================================
+            # فقط فرصت‌های قابل توجه
+            # =============================================
+            if confirmation >= 3:
+                final_results.append({
                     "symbol": symbol,
-                    "signal": signal,
-                    "score": score,
-                    "confidence": confidence,
-                    "price": price,
+                    "signal": final_direction,
+                    "confirmation": confirmation,
+                    "confirmation_percent":
+                        confirmation_percent,
+                    "average_score":
+                        average_score,
+                    "price":
+                        last_price,
+                    "timeframes":
+                        timeframe_results,
                 })
-            except Exception as e:
-                print(
-                    f"SCAN ERROR {symbol}:",
-                    e
-                )
-        if not results:
+        # =================================================
+        # اگر فرصت قوی پیدا نشد
+        # =================================================
+        if not final_results:
             await update.message.reply_text(
-                "❌ هیچ نتیجه‌ای از اسکن بازار دریافت نشد."
+                "⚪ در حال حاضر هیچ سیگنال چندتایم‌فریمی "
+                "قابل‌اعتمادی پیدا نشد.\n\n"
+                "هیچ سفارش واقعی ارسال نمی‌شود."
             )
             return
-        # مرتب‌سازی بر اساس امتیاز
-        results.sort(
+        # =================================================
+        # مرتب‌سازی
+        # =================================================
+        final_results.sort(
             key=lambda x: (
-                x["score"],
-                x["confidence"]
+                x["confirmation"],
+                x["average_score"]
             ),
             reverse=True
         )
+        # =================================================
+        # ساخت پیام
+        # =================================================
         message = (
-            "🔥 بهترین فرصت‌های فعلی بازار\n\n"
-            "⏱️ تایم‌فریم: 1H\n"
+            "🔥 بهترین فرصت‌های چندتایم‌فریمی\n\n"
+            "⏱️ 1H → 2H → 3H → 4H → 1D\n"
             "━━━━━━━━━━━━━━\n"
         )
-        shown = 0
-        for item in results:
+        for item in final_results[:8]:
+            symbol = item["symbol"]
+            name = (
+                symbol
+                .replace("-SWAP-USDT", "")
+                .replace("-USDT", "")
+            )
             signal = item["signal"]
             if signal == "LONG":
                 emoji = "🟢"
@@ -150,21 +255,52 @@ async def scan_market(
                 emoji = "🔴"
             else:
                 emoji = "⚪"
-            symbol_name = (
-                item["symbol"]
-                .replace("-SWAP-USDT", "")
-                .replace("-USDT", "")
+            confirmation = item[
+                "confirmation"
+            ]
+            confirmation_percent = int(
+                item[
+                    "confirmation_percent"
+                ]
+            )
+            average_score = round(
+                item["average_score"],
+                1
             )
             message += (
-                f"\n{emoji} {symbol_name}"
-                f" → {signal}\n"
-                f"⭐ Score: {item['score']}"
-                f" | 📈 {item['confidence']}%\n"
-                f"💰 {item['price']}\n"
+                f"\n{emoji} {name} → {signal}\n"
+                f"⭐ میانگین Score: "
+                f"{average_score}\n"
+                f"🎯 تأیید: "
+                f"{confirmation}/5 "
+                f"({confirmation_percent}%)\n"
+                f"💰 قیمت: "
+                f"{item['price']}\n"
             )
-            shown += 1
-            if shown >= 10:
-                break
+            message += (
+                "📊 "
+            )
+            for timeframe in SCAN_TIMEFRAMES:
+                data = item[
+                    "timeframes"
+                ].get(
+                    timeframe,
+                    {}
+                )
+                tf_signal = data.get(
+                    "signal",
+                    "NO TRADE"
+                )
+                if tf_signal == "LONG":
+                    tf_emoji = "🟢"
+                elif tf_signal == "SHORT":
+                    tf_emoji = "🔴"
+                else:
+                    tf_emoji = "⚪"
+                message += (
+                    f"{timeframe}:{tf_emoji} "
+                )
+            message += "\n"
         message += (
             "\n━━━━━━━━━━━━━━\n"
             "⚠️ این نتایج صرفاً تحلیلی هستند.\n"
@@ -174,6 +310,10 @@ async def scan_market(
             message
         )
     except Exception as e:
+        print(
+            "SCAN MARKET ERROR:",
+            e
+        )
         await update.message.reply_text(
             f"❌ خطا در اسکن بازار:\n{e}"
         )
@@ -537,6 +677,9 @@ async def messages(
             context
         )
         return
+# =========================================================
+# اجرای ربات
+# =========================================================
 def main():
     application = (
         Application.builder()
