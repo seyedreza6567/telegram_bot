@@ -6,7 +6,7 @@ from analysis_engine import analyze
 
 
 # =========================================================
-# تنظیمات
+# تنظیمات بک‌تست
 # =========================================================
 
 SYMBOLS = [
@@ -17,7 +17,6 @@ SYMBOLS = [
     "XRP-SWAP-USDT",
     "DOGE-SWAP-USDT",
     "ADA-SWAP-USDT",
-    "AVAX-SWAP-USDT",
     "LINK-SWAP-USDT",
     "DOT-SWAP-USDT",
     "LTC-SWAP-USDT",
@@ -45,7 +44,7 @@ ATR_TP2 = 4.0
 
 
 # =========================================================
-# دریافت اطلاعات
+# دریافت داده
 # =========================================================
 
 def load_symbol_data(symbol):
@@ -78,12 +77,6 @@ def load_symbol_data(symbol):
                 continue
 
             df = df.copy()
-
-            if "open_time" not in df.columns:
-                print(
-                    f"⚠️ {timeframe}: open_time موجود نیست"
-                )
-                continue
 
             df["open_time"] = pd.to_datetime(
                 df["open_time"]
@@ -211,10 +204,7 @@ def build_final_signal(results):
         short_scores
     )
 
-    # =====================================================
     # LONG
-    # =====================================================
-
     if (
         long_count >= MIN_CONFIRMATION
         and short_count == 0
@@ -234,10 +224,7 @@ def build_final_signal(results):
                 "average_score": average_score,
             }
 
-    # =====================================================
     # SHORT
-    # =====================================================
-
     if (
         short_count >= MIN_CONFIRMATION
         and long_count == 0
@@ -294,17 +281,9 @@ def check_trade_result(
 
         if signal == "LONG":
 
-            hit_sl = (
-                low <= stop_loss
-            )
-
-            hit_tp1 = (
-                high >= tp1
-            )
-
-            hit_tp2 = (
-                high >= tp2
-            )
+            hit_sl = low <= stop_loss
+            hit_tp1 = high >= tp1
+            hit_tp2 = high >= tp2
 
             # حالت محافظه‌کارانه
             if hit_sl and (
@@ -321,20 +300,13 @@ def check_trade_result(
             if hit_sl:
                 return "SL"
 
-        elif signal == "SHORT":
+        else:
 
-            hit_sl = (
-                high >= stop_loss
-            )
+            hit_sl = high >= stop_loss
+            hit_tp1 = low <= tp1
+            hit_tp2 = low <= tp2
 
-            hit_tp1 = (
-                low <= tp1
-            )
-
-            hit_tp2 = (
-                low <= tp2
-            )
-
+            # حالت محافظه‌کارانه
             if hit_sl and (
                 hit_tp1 or hit_tp2
             ):
@@ -412,17 +384,9 @@ def backtest_symbol(symbol):
             i += 1
             continue
 
-        # -------------------------------------------------
-        # ورود
-        # -------------------------------------------------
-
         entry = float(
             base_df.iloc[i]["close"]
         )
-
-        # -------------------------------------------------
-        # ATR تایم‌فریم 1H
-        # -------------------------------------------------
 
         one_hour = results.get(
             "1h",
@@ -440,9 +404,7 @@ def backtest_symbol(symbol):
 
         try:
 
-            atr = float(
-                atr
-            )
+            atr = float(atr)
 
         except:
 
@@ -456,9 +418,9 @@ def backtest_symbol(symbol):
             i += 1
             continue
 
-        # -------------------------------------------------
-        # SL / TP
-        # -------------------------------------------------
+        # =================================================
+        # LONG
+        # =================================================
 
         if signal == "LONG":
 
@@ -480,6 +442,10 @@ def backtest_symbol(symbol):
                 atr * ATR_TP2
             )
 
+        # =================================================
+        # SHORT
+        # =================================================
+
         else:
 
             stop_loss = (
@@ -499,10 +465,6 @@ def backtest_symbol(symbol):
                 -
                 atr * ATR_TP2
             )
-
-        # -------------------------------------------------
-        # نتیجه
-        # -------------------------------------------------
 
         result = check_trade_result(
             df=base_df,
@@ -535,12 +497,10 @@ def backtest_symbol(symbol):
         trades.append({
             "time": timestamp,
             "signal": signal,
-            "confirmation": final[
-                "confirmation"
-            ],
-            "average_score": final[
-                "average_score"
-            ],
+            "confirmation":
+                final["confirmation"],
+            "average_score":
+                final["average_score"],
             "entry": entry,
             "stop_loss": stop_loss,
             "tp1": tp1,
@@ -548,9 +508,9 @@ def backtest_symbol(symbol):
             "result": result
         })
 
-        # -------------------------------------------------
-        # جلوگیری از ورودهای پشت سر هم
-        # -------------------------------------------------
+        # =================================================
+        # جلوگیری از معاملات پشت سرهم
+        # =================================================
 
         trade_end = i + 1
 
@@ -594,7 +554,7 @@ def backtest_symbol(symbol):
         )
 
     # =====================================================
-    # آمار ارز
+    # آمار
     # =====================================================
 
     total_trades = len(
@@ -624,10 +584,6 @@ def backtest_symbol(symbol):
     else:
 
         win_rate = 0
-
-    # =====================================================
-    # گزارش ارز
-    # =====================================================
 
     print("\n" + "-" * 50)
 
@@ -686,19 +642,18 @@ def main():
 
     print("\n")
     print("=" * 65)
-
     print(
-        "🚀 شروع بک‌تست تفکیکی"
+        "🚀 شروع بک‌تست بدون AVAX"
     )
-
     print(
         "⏱️ 1H → 2H → 3H → 4H → 1D"
     )
-
     print(
         f"📊 تعداد ارزها: {len(SYMBOLS)}"
     )
-
+    print(
+        "🚫 AVAX عمداً حذف شده است."
+    )
     print("=" * 65)
 
     all_results = []
@@ -723,12 +678,10 @@ def main():
                 f"\n❌ خطا در {symbol}:"
             )
 
-            print(
-                e
-            )
+            print(e)
 
     # =====================================================
-    # مرتب‌سازی بر اساس سود
+    # رتبه‌بندی
     # =====================================================
 
     all_results.sort(
@@ -739,7 +692,9 @@ def main():
 
     print("\n\n")
     print("=" * 65)
-    print("🏆 رتبه‌بندی ارزها")
+    print(
+        "🏆 رتبه‌بندی ارزها"
+    )
     print("=" * 65)
 
     for index, result in enumerate(
@@ -795,7 +750,7 @@ def main():
         )
 
     # =====================================================
-    # آمار کلی
+    # گزارش نهایی
     # =====================================================
 
     total_trades = sum(
@@ -852,17 +807,11 @@ def main():
 
         overall_win_rate = 0
 
-    # =====================================================
-    # گزارش نهایی
-    # =====================================================
-
     print("\n\n")
     print("=" * 65)
-
     print(
-        "🏆 گزارش نهایی"
+        "🏆 گزارش نهایی بدون AVAX"
     )
-
     print("=" * 65)
 
     print(
@@ -900,9 +849,8 @@ def main():
         f"{total_r:.2f}R"
     )
 
-    print("\n")
     print(
-        "⚠️ این بک‌تست تضمین‌کننده سود واقعی نیست."
+        "\n⚠️ این بک‌تست فقط تحلیلی است."
     )
 
 
