@@ -35,7 +35,7 @@ PRIORITY_SYMBOLS = [
     "SUI-SWAP-USDT",
 ]
 # =========================================================
-# تایم‌فریم‌های اسکن
+# تایم‌فریم‌ها
 # =========================================================
 SCAN_TIMEFRAMES = [
     "1h",
@@ -147,12 +147,41 @@ async def scan_market(
                         "-"
                     )
                     last_price = price
+                    # =====================================
+                    # ذخیره کامل نتیجه تحلیل
+                    # =====================================
                     timeframe_results[
                         timeframe
                     ] = {
                         "signal": signal,
                         "score": score,
                         "confidence": confidence,
+                        "price": price,
+                        "atr": result.get(
+                            "atr"
+                        ),
+                        "entry": result.get(
+                            "entry"
+                        ),
+                        "stop_loss": result.get(
+                            "stop_loss"
+                        ),
+                        "take_profit": result.get(
+                            "take_profit"
+                        ),
+                        "take_profit_1": result.get(
+                            "take_profit_1"
+                        ),
+                        "take_profit_2": result.get(
+                            "take_profit_2"
+                        ),
+                        "risk_reward": result.get(
+                            "risk_reward"
+                        ),
+                        "reason": result.get(
+                            "reason",
+                            ""
+                        ),
                     }
                     valid_count += 1
                     total_score += score
@@ -186,18 +215,39 @@ async def scan_market(
                 final_direction = "NO TRADE"
                 confirmation = 0
             # =============================================
-            # قدرت تأیید
+            # درصد تأیید
             # =============================================
             confirmation_percent = (
-                confirmation / len(SCAN_TIMEFRAMES)
+                confirmation /
+                len(SCAN_TIMEFRAMES)
             ) * 100
+            # =============================================
+            # میانگین Score
+            # =============================================
             average_score = 0
             if valid_count > 0:
                 average_score = (
-                    total_score / valid_count
+                    total_score /
+                    valid_count
                 )
             # =============================================
-            # فقط فرصت‌های قابل توجه
+            # انتخاب بهترین اطلاعات Entry / SL / TP
+            #
+            # اولویت با تایم‌فریم 1H است
+            # =============================================
+            trade_data = {}
+            for timeframe in SCAN_TIMEFRAMES:
+                data = timeframe_results.get(
+                    timeframe,
+                    {}
+                )
+                if data.get(
+                    "signal"
+                ) == final_direction:
+                    trade_data = data
+                    break
+            # =============================================
+            # فقط فرصت‌های حداقل 3 از 5
             # =============================================
             if confirmation >= 3:
                 final_results.append({
@@ -210,11 +260,13 @@ async def scan_market(
                         average_score,
                     "price":
                         last_price,
+                    "trade_data":
+                        trade_data,
                     "timeframes":
                         timeframe_results,
                 })
         # =================================================
-        # اگر فرصت قوی پیدا نشد
+        # هیچ فرصت قابل توجهی پیدا نشد
         # =================================================
         if not final_results:
             await update.message.reply_text(
@@ -245,8 +297,14 @@ async def scan_market(
             symbol = item["symbol"]
             name = (
                 symbol
-                .replace("-SWAP-USDT", "")
-                .replace("-USDT", "")
+                .replace(
+                    "-SWAP-USDT",
+                    ""
+                )
+                .replace(
+                    "-USDT",
+                    ""
+                )
             )
             signal = item["signal"]
             if signal == "LONG":
@@ -267,6 +325,25 @@ async def scan_market(
                 item["average_score"],
                 1
             )
+            trade_data = item.get(
+                "trade_data",
+                {}
+            )
+            entry = trade_data.get(
+                "entry"
+            )
+            stop_loss = trade_data.get(
+                "stop_loss"
+            )
+            tp1 = trade_data.get(
+                "take_profit_1"
+            )
+            tp2 = trade_data.get(
+                "take_profit_2"
+            )
+            risk_reward = trade_data.get(
+                "risk_reward"
+            )
             message += (
                 f"\n{emoji} {name} → {signal}\n"
                 f"⭐ میانگین Score: "
@@ -277,9 +354,28 @@ async def scan_market(
                 f"💰 قیمت: "
                 f"{item['price']}\n"
             )
-            message += (
-                "📊 "
-            )
+            # =============================================
+            # اطلاعات معامله پیشنهادی
+            # =============================================
+            if signal in [
+                "LONG",
+                "SHORT"
+            ] and entry is not None:
+                message += (
+                    f"📍 Entry: {entry}\n"
+                    f"🛑 Stop Loss: "
+                    f"{stop_loss if stop_loss is not None else '-'}\n"
+                    f"🎯 TP1: "
+                    f"{tp1 if tp1 is not None else '-'}\n"
+                    f"🎯 TP2: "
+                    f"{tp2 if tp2 is not None else '-'}\n"
+                    f"📊 Risk/Reward: "
+                    f"1:{risk_reward if risk_reward is not None else '-'}\n"
+                )
+            # =============================================
+            # وضعیت تایم‌فریم‌ها
+            # =============================================
+            message += "📊 "
             for timeframe in SCAN_TIMEFRAMES:
                 data = item[
                     "timeframes"
@@ -360,8 +456,14 @@ async def messages(
             for symbol in symbols_to_show:
                 display_name = (
                     symbol
-                    .replace("-SWAP-USDT", "")
-                    .replace("-USDT", "")
+                    .replace(
+                        "-SWAP-USDT",
+                        ""
+                    )
+                    .replace(
+                        "-USDT",
+                        ""
+                    )
                 )
                 row.append(
                     display_name
@@ -399,8 +501,14 @@ async def messages(
         for symbol in symbols:
             display_name = (
                 symbol
-                .replace("-SWAP-USDT", "")
-                .replace("-USDT", "")
+                .replace(
+                    "-SWAP-USDT",
+                    ""
+                )
+                .replace(
+                    "-USDT",
+                    ""
+                )
             )
             if text == display_name:
                 selected_symbol = symbol
@@ -490,10 +598,16 @@ async def messages(
                         f"{data.get('price', '-')}"
                         f"\n   📏 ATR: "
                         f"{data.get('atr', '-')}"
+                        f"\n   📍 Entry: "
+                        f"{data.get('entry', '-')}"
                         f"\n   🛑 حد ضرر: "
                         f"{data.get('stop_loss', '-')}"
-                        f"\n   🎯 حد سود: "
-                        f"{data.get('take_profit', '-')}"
+                        f"\n   🎯 TP1: "
+                        f"{data.get('take_profit_1', '-')}"
+                        f"\n   🎯 TP2: "
+                        f"{data.get('take_profit_2', '-')}"
+                        f"\n   📊 Risk/Reward: "
+                        f"1:{data.get('risk_reward', '-')}"
                     )
             message += (
                 "\n\n⚠️ سفارش واقعی ارسال نمی‌شود."
@@ -518,7 +632,10 @@ async def messages(
     ]:
         interval = (
             text
-            .replace("⏱️ ", "")
+            .replace(
+                "⏱️ ",
+                ""
+            )
             .lower()
         )
         if interval == "24h":
@@ -596,10 +713,16 @@ async def messages(
                 "SHORT"
             ]:
                 message += (
-                    f"\n🛑 حد ضرر: "
+                    f"\n📍 Entry: "
+                    f"{result.get('entry', '-')}\n"
+                    f"🛑 حد ضرر: "
                     f"{result.get('stop_loss', '-')}\n"
-                    f"🎯 حد سود: "
-                    f"{result.get('take_profit', '-')}\n"
+                    f"🎯 TP1: "
+                    f"{result.get('take_profit_1', '-')}\n"
+                    f"🎯 TP2: "
+                    f"{result.get('take_profit_2', '-')}\n"
+                    f"📊 Risk/Reward: "
+                    f"1:{result.get('risk_reward', '-')}\n"
                 )
             message += (
                 f"\n📝 دلیل:\n{reason}\n\n"
@@ -630,7 +753,9 @@ async def messages(
                 limit=5
             )
             if df is not None:
-                price = df["close"].iloc[-1]
+                price = df[
+                    "close"
+                ].iloc[-1]
                 await update.message.reply_text(
                     f"💰 قیمت {selected_symbol}:\n\n"
                     f"{price}"
