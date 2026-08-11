@@ -56,8 +56,13 @@ MAX_HOLD_CANDLES = 100
 # حداقل Score برای ورود
 MIN_SCORE = 7
 
-# حداقل اختلاف LONG و SHORT
+# حداقل اختلاف امتیاز LONG و SHORT برای پذیرفتن سیگنال
+# (این مقدار قبلاً تعریف شده بود ولی هیچ‌جا اعمال نمی‌شد - اصلاح شد)
 MIN_DIRECTION_DIFFERENCE = 3
+
+# هزینه معامله (کارمزد ورود+خروج + اسلیپیج تخمینی) بر حسب R
+# قبلاً اصلاً لحاظ نمی‌شد که نتیجه را خوش‌بینانه‌تر از واقعیت نشان می‌داد
+COST_PER_TRADE_R = 0.05
 
 
 # =========================================================
@@ -111,6 +116,30 @@ def build_trade(result):
 
     if score < MIN_SCORE:
         return None
+
+    # -----------------------------------------------------
+    # اصلاح ۲: اعمال واقعی فیلتر MIN_DIRECTION_DIFFERENCE
+    #
+    # اگر analysis_engine شما امتیاز جداگانه برای LONG و SHORT
+    # برمی‌گرداند (مثلاً long_score / short_score) این فیلتر
+    # سیگنال‌هایی که اختلاف کمی بین دو جهت دارند را رد می‌کند.
+    #
+    # اگر analysis_engine شما این دو کلید را برنمی‌گرداند،
+    # این بخش را با نام واقعی کلیدهای خروجی خودتان جایگزین کنید.
+    # -----------------------------------------------------
+
+    long_score = result.get("long_score")
+    short_score = result.get("short_score")
+
+    if long_score is not None and short_score is not None:
+
+        long_score = safe_float(long_score, 0)
+        short_score = safe_float(short_score, 0)
+
+        direction_diff = abs(long_score - short_score)
+
+        if direction_diff < MIN_DIRECTION_DIFFERENCE:
+            return None
 
     price = safe_float(
         result.get("price")
@@ -182,6 +211,65 @@ def build_trade(result):
 
 
 # =========================================================
+# تشخیص ترتیب احتمالی برخورد SL/TP وقتی هر دو در یک کندل
+# اتفاق می‌افتند (اصلاح ۱)
+#
+# قبلاً همیشه فرض می‌شد SL اول خورده که یک سوگیری سیستماتیک
+# به سمت نتیجه منفی ایجاد می‌کرد (چون ATR_SL == ATR_TP1).
+#
+# اینجا از جهت کندل (رابطه open/close) به عنوان یک تخمین
+# استفاده می‌کنیم:
+# - اگر کندل صعودی باشد (close > open) فرض می‌کنیم قیمت
+#   ابتدا پایین رفته (low) سپس بالا رفته (high) → منطقی‌تر
+#   است TP روی LONG (که به high نیاز دارد) و SL روی SHORT
+#   (که به high نیاز دارد) دیرتر لمس شده باشد. اما چون این
+#   فقط یک تخمین است، منطق را برای هر دو جهت معامله جداگانه
+#   و صریح می‌نویسیم.
+# - اگر کندل نزولی باشد (close < open) عکس حالت بالا.
+# - اگر open == close، به روش محافظه‌کارانه قبلی (SL اول)
+#   برمی‌گردیم.
+#
+# این یک تخمین است، نه قطعیت؛ برای دقت واقعی باید از دیتای
+# تایم‌فریم پایین‌تر (مثلاً 1m داخل هر کندل 1h) استفاده کرد.
+# =========================================================
+
+def resolve_same_candle_order(candle, signal):
+
+    open_ = safe_float(candle["open"])
+    close_ = safe_float(candle["close"])
+
+    if open_ is None or close_ is None:
+        return "SL_FIRST"
+
+    if close_ > open_:
+        # کندل صعودی: احتمالاً low قبل از high لمس شده
+        candle_direction = "UP"
+    elif close_ < open_:
+        # کندل نزولی: احتمالاً high قبل از low لمس شده
+        candle_direction = "DOWN"
+    else:
+        return "SL_FIRST"
+
+    if signal == "LONG":
+        # LONG: TP نیاز به high دارد، SL نیاز به low دارد
+        if candle_direction == "UP":
+            # low (SL) زودتر بوده
+            return "SL_FIRST"
+        else:
+            # high (TP) زودتر بوده
+            return "TP_FIRST"
+
+    else:
+        # SHORT: TP نیاز به low دارد، SL نیاز به high دارد
+        if candle_direction == "UP":
+            # high (SL) زودتر بوده
+            return "SL_FIRST"
+        else:
+            # low (TP) زودتر بوده
+            return "TP_FIRST"
+
+
+# =========================================================
 # بررسی یک معامله
 #
 # مدل:
@@ -229,8 +317,18 @@ def simulate_trade(
         entry_index + MAX_HOLD_CANDLES + 1
     )
 
+    # -------------------------------------------------------
+    # اصلاح ۳: شروع بررسی از خود کندل entry_index
+    #
+    # چون analyze() روی df.iloc[:entry_index] اجرا می‌شود،
+    # سیگنال بر اساس داده‌ی تا انتهای کندل (entry_index - 1)
+    # صادر شده و ورود عملاً در ابتدای کندل entry_index رخ
+    # می‌دهد. قبلاً شبیه‌سازی از entry_index + 1 شروع می‌شد و
+    # همین کندل ورود اصلاً برای برخورد SL/TP چک نمی‌شد.
+    # -------------------------------------------------------
+
     for i in range(
-        entry_index + 1,
+        entry_index,
         last_index
     ):
 
@@ -262,21 +360,42 @@ def simulate_trade(
                 hit_sl = low <= current_sl
                 hit_tp1 = high >= tp1
 
-                # اگر هر دو در یک کندل باشند
-                # حالت محافظه کارانه: SL اول
                 if hit_sl and hit_tp1:
 
-                    return {
-                        "result": "SL",
-                        "r": -1.0,
-                        "bars": i - entry_index
-                    }
+                    order = resolve_same_candle_order(
+                        candle, signal
+                    )
+
+                    if order == "SL_FIRST":
+
+                        return {
+                            "result": "SL",
+                            "r": -1.0 - COST_PER_TRADE_R,
+                            "bars": i - entry_index
+                        }
+
+                    else:
+                        # TP1 زودتر لمس شده، ادامه می‌دهیم
+                        tp1_hit = True
+
+                        if MOVE_SL_TO_ENTRY_AFTER_TP1:
+                            current_sl = entry
+
+                        if high >= tp2:
+
+                            return {
+                                "result": "TP2",
+                                "r": 1.5 - COST_PER_TRADE_R,
+                                "bars": i - entry_index
+                            }
+
+                        continue
 
                 if hit_sl:
 
                     return {
                         "result": "SL",
-                        "r": -1.0,
+                        "r": -1.0 - COST_PER_TRADE_R,
                         "bars": i - entry_index
                     }
 
@@ -295,7 +414,7 @@ def simulate_trade(
 
                         return {
                             "result": "TP2",
-                            "r": 1.5,
+                            "r": 1.5 - COST_PER_TRADE_R,
                             "bars": i - entry_index
                         }
 
@@ -314,7 +433,7 @@ def simulate_trade(
 
                     return {
                         "result": "TP2",
-                        "r": 1.5,
+                        "r": 1.5 - COST_PER_TRADE_R,
                         "bars": i - entry_index
                     }
 
@@ -323,7 +442,7 @@ def simulate_trade(
 
                     return {
                         "result": "TP1",
-                        "r": 0.5,
+                        "r": 0.5 - COST_PER_TRADE_R,
                         "bars": i - entry_index
                     }
 
@@ -344,17 +463,39 @@ def simulate_trade(
 
                 if hit_sl and hit_tp1:
 
-                    return {
-                        "result": "SL",
-                        "r": -1.0,
-                        "bars": i - entry_index
-                    }
+                    order = resolve_same_candle_order(
+                        candle, signal
+                    )
+
+                    if order == "SL_FIRST":
+
+                        return {
+                            "result": "SL",
+                            "r": -1.0 - COST_PER_TRADE_R,
+                            "bars": i - entry_index
+                        }
+
+                    else:
+                        tp1_hit = True
+
+                        if MOVE_SL_TO_ENTRY_AFTER_TP1:
+                            current_sl = entry
+
+                        if low <= tp2:
+
+                            return {
+                                "result": "TP2",
+                                "r": 1.5 - COST_PER_TRADE_R,
+                                "bars": i - entry_index
+                            }
+
+                        continue
 
                 if hit_sl:
 
                     return {
                         "result": "SL",
-                        "r": -1.0,
+                        "r": -1.0 - COST_PER_TRADE_R,
                         "bars": i - entry_index
                     }
 
@@ -373,7 +514,7 @@ def simulate_trade(
 
                         return {
                             "result": "TP2",
-                            "r": 1.5,
+                            "r": 1.5 - COST_PER_TRADE_R,
                             "bars": i - entry_index
                         }
 
@@ -391,7 +532,7 @@ def simulate_trade(
 
                     return {
                         "result": "TP2",
-                        "r": 1.5,
+                        "r": 1.5 - COST_PER_TRADE_R,
                         "bars": i - entry_index
                     }
 
@@ -399,7 +540,7 @@ def simulate_trade(
 
                     return {
                         "result": "TP1",
-                        "r": 0.5,
+                        "r": 0.5 - COST_PER_TRADE_R,
                         "bars": i - entry_index
                     }
 
@@ -428,7 +569,7 @@ def simulate_trade(
 
         return {
             "result": "TP1",
-            "r": 0.5,
+            "r": 0.5 - COST_PER_TRADE_R,
             "bars": last_index - entry_index
         }
 
@@ -853,6 +994,10 @@ def main():
 
     print(
         "💡 بعد از TP1: انتقال SL به Entry"
+    )
+
+    print(
+        f"💸 هزینه هر معامله: {COST_PER_TRADE_R}R"
     )
 
     print(
