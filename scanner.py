@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 BASE_URL = "https://api.toobit.com"
 # =========================================================
-# دریافت اطلاعات قراردادهای Futures
+# دریافت لیست قراردادهای Futures فعال
 # =========================================================
 def get_futures_symbols():
     url = f"{BASE_URL}/api/v1/exchangeInfo"
@@ -24,7 +24,6 @@ def get_futures_symbols():
             status = contract.get("status")
             if not symbol:
                 continue
-            # فقط قراردادهای فعال
             if status and str(status).upper() not in [
                 "TRADING",
                 "ONLINE",
@@ -32,7 +31,6 @@ def get_futures_symbols():
                 "NORMAL"
             ]:
                 continue
-            # فقط قراردادهای USDT
             if symbol.endswith("-USDT"):
                 symbols.append(symbol)
         symbols = sorted(set(symbols))
@@ -71,9 +69,7 @@ def _get_raw_klines(
         r.raise_for_status()
         data = r.json()
         if not isinstance(data, list) or len(data) == 0:
-            print(
-                "داده کندل دریافت نشد"
-            )
+            print("داده کندل دریافت نشد")
             return None
         columns = [
             "open_time",
@@ -117,10 +113,7 @@ def _get_raw_klines(
         ).reset_index(drop=True)
         return df
     except Exception as e:
-        print(
-            "ERROR:",
-            e
-        )
+        print("ERROR:", e)
         return None
 # =========================================================
 # ساخت تایم‌فریم 3H از 1H
@@ -136,9 +129,7 @@ def _build_3h_from_1h(
     )
     if df is None or len(df) < 3:
         return None
-    df = df.set_index(
-        "open_time"
-    )
+    df = df.set_index("open_time")
     result = df.resample("3h").agg({
         "open": "first",
         "high": "max",
@@ -187,7 +178,7 @@ def get_klines(
         limit=limit
     )
 # =========================================================
-# تست فایل
+# تست مستقیم فایل
 # =========================================================
 if __name__ == "__main__":
     print(
@@ -198,9 +189,7 @@ if __name__ == "__main__":
         "\nچند قرارداد اول:"
     )
     for symbol in symbols[:20]:
-        print(
-            symbol
-        )
+        print(symbol)
     print(
         "\nتست دریافت BTC..."
     )
@@ -213,9 +202,7 @@ if __name__ == "__main__":
         print(
             "\nداده 3H دریافت شد ✅"
         )
-        print(
-            df.tail()
-        )
+        print(df.tail())
     else:
         print(
             "\nخطا در دریافت داده 3H ❌"
