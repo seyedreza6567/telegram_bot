@@ -1,14 +1,11 @@
+import time
 import pandas as pd
 import numpy as np
-
 from scanner import get_klines
 from analysis_engine import analyze
-
-
 # =========================================================
 # تنظیمات اصلی
 # =========================================================
-
 SYMBOLS = [
     "BTC-SWAP-USDT",
     "ETH-SWAP-USDT",
@@ -17,50 +14,29 @@ SYMBOLS = [
     "XRP-SWAP-USDT",
     "DOGE-SWAP-USDT",
     "ADA-SWAP-USDT",
+    "AVAX-SWAP-USDT",
     "LINK-SWAP-USDT",
     "DOT-SWAP-USDT",
     "LTC-SWAP-USDT",
     "UNI-SWAP-USDT",
     "SUI-SWAP-USDT",
-    "AVAX-SWAP-USDT",
 ]
-
 TIMEFRAME = "1h"
-
+# تعداد کندل تاریخی
 CANDLE_LIMIT = 1000
-
-MIN_CANDLES = 250
-
-# درصد داده برای پیدا کردن تنظیمات
-TRAIN_PERCENT = 0.60
-
-# فقط سیگنال‌هایی که حداقل این امتیاز را دارند
-MIN_SCORES = [6, 7, 8, 9]
-
-# فاصله حد ضرر بر اساس ATR
-STOP_MULTIPLIERS = [
-    1.5,
-    1.75,
-    2.0,
-    2.25,
-]
-
-# TP2 بر اساس ATR
-TP_MULTIPLIERS = [
-    3.0,
-    3.5,
-    4.0,
-    4.5,
-]
-
-# حداقل تعداد معاملات برای اینکه یک تنظیم معتبر باشد
-MIN_TRADES = 8
-
-
+# حداقل داده برای شروع تحلیل
+MIN_TRAIN_CANDLES = 250
+# ATR
+ATR_SL = 2.0
+ATR_TP1 = 2.0
+ATR_TP2 = 4.0
+# حداقل امتیاز برای ورود
+MIN_SCORE = 6
+# فاصله بین درخواست‌ها
+REQUEST_DELAY = 0.8
 # =========================================================
-# محاسبه نتیجه معامله
+# بررسی معامله
 # =========================================================
-
 def check_trade_result(
     df,
     entry_index,
@@ -69,212 +45,168 @@ def check_trade_result(
     tp1,
     tp2
 ):
-
-    for i in range(
-        entry_index + 1,
-        len(df)
-    ):
-
+    for i in range(entry_index + 1, len(df)):
         candle = df.iloc[i]
-
         high = float(candle["high"])
         low = float(candle["low"])
-
         if signal == "LONG":
-
             hit_sl = low <= stop_loss
             hit_tp2 = high >= tp2
             hit_tp1 = high >= tp1
-
-            # حالت محافظه کارانه
-            if hit_sl and (
-                hit_tp1 or hit_tp2
-            ):
+            # محافظه‌کارانه:
+            # اگر SL و TP در یک کندل باشند → SL
+            if hit_sl and (hit_tp1 or hit_tp2):
                 return "SL"
-
             if hit_sl:
                 return "SL"
-
             if hit_tp2:
                 return "TP2"
-
             if hit_tp1:
                 return "TP1"
-
         elif signal == "SHORT":
-
             hit_sl = high >= stop_loss
             hit_tp2 = low <= tp2
             hit_tp1 = low <= tp1
-
-            if hit_sl and (
-                hit_tp1 or hit_tp2
-            ):
+            if hit_sl and (hit_tp1 or hit_tp2):
                 return "SL"
-
             if hit_sl:
                 return "SL"
-
             if hit_tp2:
                 return "TP2"
-
             if hit_tp1:
                 return "TP1"
-
     return "OPEN"
-
-
 # =========================================================
-# اجرای بک تست با تنظیمات مشخص
+# بک‌تست یک ارز
 # =========================================================
-
-def run_backtest(
-    df,
-    min_score,
-    stop_multiplier,
-    tp_multiplier,
-    start_index,
-    end_index
-):
-
+def backtest_symbol(symbol):
+    print("\n" + "=" * 60)
+    print(f"🔎 BACKTEST: {symbol}")
+    print("=" * 60)
+    try:
+        df = get_klines(
+            symbol=symbol,
+            interval=TIMEFRAME,
+            limit=CANDLE_LIMIT
+        )
+    except Exception as e:
+        print(f"❌ خطای دریافت {symbol}: {e}")
+        return None
+    if df is None:
+        print("❌ داده دریافت نشد")
+        return None
+    if len(df) < MIN_TRAIN_CANDLES + 20:
+        print(
+            f"❌ داده کافی نیست: {len(df)} کندل"
+        )
+        return None
+    df = df.copy()
+    # اطمینان از عددی بودن داده‌ها
+    for column in [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]:
+        if column in df.columns:
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce"
+            )
+    df = df.dropna(
+        subset=[
+            "high",
+            "low",
+            "close"
+        ]
+    ).reset_index(
+        drop=True
+    )
     trades = []
-
     tp2_count = 0
     tp1_count = 0
     sl_count = 0
     open_count = 0
-
-    profit_r = 0.0
-
-    i = max(
-        MIN_CANDLES,
-        start_index
-    )
-
-    while i < end_index - 5:
-
-        historical_df = df.iloc[
-            :i
-        ].copy()
-
-        result = analyze(
-            historical_df
-        )
-
+    total_profit_r = 0.0
+    i = MIN_TRAIN_CANDLES
+    # =====================================================
+    # حرکت در تاریخ
+    # =====================================================
+    while i < len(df) - 10:
+        historical_df = df.iloc[:i].copy()
+        try:
+            result = analyze(
+                historical_df
+            )
+        except Exception:
+            i += 1
+            continue
         signal = result.get(
             "signal",
             "NO TRADE"
         )
-
         score = result.get(
             "score",
             0
         )
-
-        # -------------------------------------------------
-        # فیلتر امتیاز
-        # -------------------------------------------------
-
+        # فقط سیگنال‌های قابل توجه
         if signal not in [
             "LONG",
             "SHORT"
         ]:
-
             i += 1
             continue
-
-        if score < min_score:
-
+        if score < MIN_SCORE:
             i += 1
             continue
-
-        entry = result.get(
-            "price"
-        )
-
-        atr = result.get(
-            "atr"
-        )
-
+        entry = result.get("price")
+        atr = result.get("atr")
         if entry is None or atr is None:
-
             i += 1
             continue
-
         try:
-
             entry = float(entry)
             atr = float(atr)
-
         except Exception:
-
             i += 1
             continue
-
-        if not np.isfinite(atr):
+        if not np.isfinite(atr) or atr <= 0:
             i += 1
             continue
-
-        if atr <= 0:
-            i += 1
-            continue
-
-        # -------------------------------------------------
-        # حد ضرر و سود
-        # -------------------------------------------------
-
-        stop_distance = (
-            atr * stop_multiplier
-        )
-
-        tp_distance = (
-            atr * tp_multiplier
-        )
-
-        # TP1 نصف مسیر TP2
-        tp1_distance = (
-            tp_distance / 2
-        )
-
+        # =================================================
+        # محاسبه SL / TP
+        # =================================================
         if signal == "LONG":
-
             stop_loss = (
                 entry
-                - stop_distance
+                - atr * ATR_SL
             )
-
             tp1 = (
                 entry
-                + tp1_distance
+                + atr * ATR_TP1
             )
-
             tp2 = (
                 entry
-                + tp_distance
+                + atr * ATR_TP2
             )
-
         else:
-
             stop_loss = (
                 entry
-                + stop_distance
+                + atr * ATR_SL
             )
-
             tp1 = (
                 entry
-                - tp1_distance
+                - atr * ATR_TP1
             )
-
             tp2 = (
                 entry
-                - tp_distance
+                - atr * ATR_TP2
             )
-
-        # -------------------------------------------------
-        # نتیجه
-        # -------------------------------------------------
-
-        result_trade = check_trade_result(
+        # =================================================
+        # نتیجه معامله
+        # =================================================
+        trade_result = check_trade_result(
             df=df,
             entry_index=i,
             signal=signal,
@@ -282,601 +214,274 @@ def run_backtest(
             tp1=tp1,
             tp2=tp2
         )
-
-        if result_trade == "TP2":
-
+        # =================================================
+        # ثبت نتیجه
+        # =================================================
+        if trade_result == "TP2":
             tp2_count += 1
-
-            # TP2 نسبت به ریسک
-            risk_distance = stop_distance
-
-            reward_distance = tp_distance
-
-            r_value = (
-                reward_distance
-                / risk_distance
-            )
-
-            profit_r += r_value
-
-        elif result_trade == "TP1":
-
+            total_profit_r += 2.0
+        elif trade_result == "TP1":
             tp1_count += 1
-
-            risk_distance = stop_distance
-
-            reward_distance = tp1_distance
-
-            r_value = (
-                reward_distance
-                / risk_distance
-            )
-
-            profit_r += r_value
-
-        elif result_trade == "SL":
-
+            total_profit_r += 1.0
+        elif trade_result == "SL":
             sl_count += 1
-
-            profit_r -= 1.0
-
+            total_profit_r -= 1.0
         else:
-
             open_count += 1
-
         trades.append({
+            "symbol": symbol,
             "index": i,
             "signal": signal,
             "score": score,
             "entry": entry,
-            "stop": stop_loss,
+            "stop_loss": stop_loss,
             "tp1": tp1,
             "tp2": tp2,
-            "result": result_trade
+            "result": trade_result
         })
-
-        # -------------------------------------------------
-        # جلوگیری از معاملات پشت سر هم
-        # -------------------------------------------------
-
+        # =================================================
+        # جلوگیری از معاملات پشت سرهم
+        # =================================================
         trade_end = i + 1
-
-        while trade_end < end_index:
-
-            candle = df.iloc[
-                trade_end
-            ]
-
-            high = float(
-                candle["high"]
-            )
-
-            low = float(
-                candle["low"]
-            )
-
+        while trade_end < len(df):
+            candle = df.iloc[trade_end]
+            high = float(candle["high"])
+            low = float(candle["low"])
             finished = False
-
             if signal == "LONG":
-
-                if low <= stop_loss:
+                if (
+                    low <= stop_loss
+                    or high >= tp1
+                    or high >= tp2
+                ):
                     finished = True
-
-                elif high >= tp2:
-                    finished = True
-
-                elif high >= tp1:
-                    finished = True
-
             else:
-
-                if high >= stop_loss:
+                if (
+                    high >= stop_loss
+                    or low <= tp1
+                    or low <= tp2
+                ):
                     finished = True
-
-                elif low <= tp2:
-                    finished = True
-
-                elif low <= tp1:
-                    finished = True
-
             if finished:
                 break
-
             trade_end += 1
-
         i = max(
             i + 1,
             trade_end + 1
         )
-
+    # =====================================================
+    # آمار
+    # =====================================================
+    total_trades = len(trades)
     completed = (
         tp2_count
         + tp1_count
         + sl_count
     )
-
+    wins = (
+        tp2_count
+        + tp1_count
+    )
     if completed > 0:
-
         win_rate = (
-            (
-                tp2_count
-                + tp1_count
-            )
-            / completed
+            wins / completed
         ) * 100
-
     else:
-
         win_rate = 0.0
-
+    print("\n📊 نتیجه")
+    print(
+        f"معاملات: {total_trades}"
+    )
+    print(
+        f"🟢 TP2: {tp2_count}"
+    )
+    print(
+        f"🟢 TP1: {tp1_count}"
+    )
+    print(
+        f"🔴 SL: {sl_count}"
+    )
+    print(
+        f"⚪ OPEN: {open_count}"
+    )
+    print(
+        f"🎯 Win Rate: {win_rate:.2f}%"
+    )
+    print(
+        f"💰 Profit: {total_profit_r:.2f}R"
+    )
     return {
-        "trades": len(trades),
+        "symbol": symbol,
+        "trades": total_trades,
         "tp2": tp2_count,
         "tp1": tp1_count,
         "sl": sl_count,
         "open": open_count,
         "win_rate": win_rate,
-        "profit_r": profit_r,
+        "profit_r": total_profit_r,
         "trade_data": trades
     }
-
-
 # =========================================================
-# پیدا کردن بهترین تنظیمات
+# رتبه‌بندی
 # =========================================================
-
-def optimize_symbol(
-    symbol,
-    df
-):
-
-    split = int(
-        len(df)
-        * TRAIN_PERCENT
-    )
-
-    best = None
-
-    print(
-        f"\n🔍 بهینه‌سازی {symbol} ..."
-    )
-
-    for min_score in MIN_SCORES:
-
-        for stop_multiplier in STOP_MULTIPLIERS:
-
-            for tp_multiplier in TP_MULTIPLIERS:
-
-                result = run_backtest(
-                    df=df,
-                    min_score=min_score,
-                    stop_multiplier=stop_multiplier,
-                    tp_multiplier=tp_multiplier,
-                    start_index=MIN_CANDLES,
-                    end_index=split
-                )
-
-                if result["trades"] < MIN_TRADES:
-                    continue
-
-                # امتیاز تنظیمات
-                #
-                # سود بیشتر بهتر
-                # معاملات خیلی کم امتیاز نمی‌گیرند
-                #
-
-                optimization_score = (
-                    result["profit_r"]
-                    + (
-                        result["win_rate"]
-                        / 100
-                    )
-                )
-
-                candidate = {
-                    "min_score": min_score,
-                    "stop_multiplier": stop_multiplier,
-                    "tp_multiplier": tp_multiplier,
-                    "profit_r": result["profit_r"],
-                    "win_rate": result["win_rate"],
-                    "trades": result["trades"],
-                    "tp2": result["tp2"],
-                    "tp1": result["tp1"],
-                    "sl": result["sl"],
-                    "optimization_score":
-                        optimization_score
-                }
-
-                if (
-                    best is None
-                    or candidate[
-                        "optimization_score"
-                    ]
-                    >
-                    best[
-                        "optimization_score"
-                    ]
-                ):
-
-                    best = candidate
-
-    return best
-
-
+def calculate_rank_score(result):
+    if result is None:
+        return -999
+    profit = result["profit_r"]
+    win_rate = result["win_rate"]
+    trades = result["trades"]
+    # امتیاز اصلی بر اساس سود
+    rank_score = profit * 10
+    # پاداش Win Rate
+    rank_score += win_rate * 0.10
+    # جلوگیری از رتبه گرفتن با تعداد بسیار کم معامله
+    if trades < 10:
+        rank_score -= 20
+    return rank_score
 # =========================================================
-# تست نهایی روی داده ندیده
+# اجرای اصلی
 # =========================================================
-
-def validate_symbol(
-    symbol,
-    df,
-    settings
-):
-
-    split = int(
-        len(df)
-        * TRAIN_PERCENT
-    )
-
-    result = run_backtest(
-        df=df,
-        min_score=settings[
-            "min_score"
-        ],
-        stop_multiplier=settings[
-            "stop_multiplier"
-        ],
-        tp_multiplier=settings[
-            "tp_multiplier"
-        ],
-        start_index=split,
-        end_index=len(df) - 1
-    )
-
-    return result
-
-
-# =========================================================
-# اجرای یک ارز
-# =========================================================
-
-def process_symbol(symbol):
-
-    print(
-        "\n"
-        + "=" * 65
-    )
-
-    print(
-        f"📊 {symbol}"
-    )
-
-    print(
-        "=" * 65
-    )
-
-    df = get_klines(
-        symbol=symbol,
-        interval=TIMEFRAME,
-        limit=CANDLE_LIMIT
-    )
-
-    if df is None:
-
-        print(
-            "❌ داده دریافت نشد"
-        )
-
-        return None
-
-    if len(df) < MIN_CANDLES + 50:
-
-        print(
-            f"❌ داده کافی نیست: "
-            f"{len(df)}"
-        )
-
-        return None
-
-    df = df.copy()
-
-    # -----------------------------------------------------
-    # بهینه سازی
-    # -----------------------------------------------------
-
-    best = optimize_symbol(
-        symbol,
-        df
-    )
-
-    if best is None:
-
-        print(
-            "⚪ تنظیم مناسب پیدا نشد"
-        )
-
-        return None
-
-    print(
-        "\n🏆 بهترین تنظیمات:"
-    )
-
-    print(
-        f"Minimum Score: "
-        f"{best['min_score']}"
-    )
-
-    print(
-        f"ATR Stop: "
-        f"{best['stop_multiplier']}"
-    )
-
-    print(
-        f"ATR TP2: "
-        f"{best['tp_multiplier']}"
-    )
-
-    print(
-        f"Train Trades: "
-        f"{best['trades']}"
-    )
-
-    print(
-        f"Train Win Rate: "
-        f"{best['win_rate']:.2f}%"
-    )
-
-    print(
-        f"Train Profit: "
-        f"{best['profit_r']:.2f}R"
-    )
-
-    # -----------------------------------------------------
-    # تست داده ندیده
-    # -----------------------------------------------------
-
-    validation = validate_symbol(
-        symbol,
-        df,
-        best
-    )
-
-    print(
-        "\n🧪 نتیجه روی داده ندیده:"
-    )
-
-    print(
-        f"Trades: "
-        f"{validation['trades']}"
-    )
-
-    print(
-        f"TP2: "
-        f"{validation['tp2']}"
-    )
-
-    print(
-        f"TP1: "
-        f"{validation['tp1']}"
-    )
-
-    print(
-        f"SL: "
-        f"{validation['sl']}"
-    )
-
-    print(
-        f"Win Rate: "
-        f"{validation['win_rate']:.2f}%"
-    )
-
-    print(
-        f"Profit: "
-        f"{validation['profit_r']:.2f}R"
-    )
-
-    return {
-        "symbol": symbol,
-        "settings": best,
-        "validation": validation
-    }
-
-
-# =========================================================
-# گزارش نهایی
-# =========================================================
-
 def main():
-
+    print("\n")
+    print("=" * 60)
+    print("🚀 BACKTEST ENGINE")
+    print("=" * 60)
     print(
-        "\n"
-        + "=" * 65
+        f"⏱️ Timeframe: {TIMEFRAME}"
     )
-
     print(
-        "🚀 BACKTEST + OPTIMIZATION"
+        f"📊 Candles: {CANDLE_LIMIT}"
     )
-
     print(
-        "=" * 65
+        f"⭐ Minimum Score: {MIN_SCORE}"
     )
-
     print(
-        "\n⏱️ تایم‌فریم:",
-        TIMEFRAME
+        "\n⚠️ بک‌تست صرفاً تاریخی و تحلیلی است."
     )
-
-    print(
-        "📊 تعداد کندل:",
-        CANDLE_LIMIT
-    )
-
-    print(
-        "🧠 حالت: Train / Validation"
-    )
-
-    print(
-        "\n⚠️ هیچ سفارش واقعی ارسال نمی‌شود."
-    )
-
-    results = []
-
-    for symbol in SYMBOLS:
-
-        try:
-
-            result = process_symbol(
-                symbol
-            )
-
-            if result is not None:
-
-                results.append(
-                    result
-                )
-
-        except Exception as e:
-
-            print(
-                f"\n❌ خطا در {symbol}"
-            )
-
-            print(e)
-
+    all_results = []
     # =====================================================
-    # رتبه بندی
+    # بررسی ارزها
     # =====================================================
-
-    results.sort(
-        key=lambda x:
-        x["validation"]["profit_r"],
-        reverse=True
-    )
-
-    print(
-        "\n\n"
-        + "=" * 65
-    )
-
-    print(
-        "🏆 رتبه‌بندی نهایی"
-    )
-
-    print(
-        "=" * 65
-    )
-
-    for number, item in enumerate(
-        results,
+    for number, symbol in enumerate(
+        SYMBOLS,
         start=1
     ):
-
-        symbol = item[
-            "symbol"
-        ]
-
-        settings = item[
-            "settings"
-        ]
-
-        validation = item[
-            "validation"
-        ]
-
         print(
-            f"\n#{number} "
-            f"{symbol}"
+            f"\n🔵 {number}/{len(SYMBOLS)}"
         )
-
-        print(
-            f"💰 Profit: "
-            f"{validation['profit_r']:.2f}R"
+        result = backtest_symbol(
+            symbol
         )
-
-        print(
-            f"🎯 Win Rate: "
-            f"{validation['win_rate']:.2f}%"
+        if result is not None:
+            result["rank_score"] = (
+                calculate_rank_score(
+                    result
+                )
+            )
+            all_results.append(
+                result
+            )
+        # جلوگیری از فشار به API
+        time.sleep(
+            REQUEST_DELAY
         )
-
-        print(
-            f"📊 Trades: "
-            f"{validation['trades']}"
-        )
-
-        print(
-            f"🟢 TP2: "
-            f"{validation['tp2']}"
-        )
-
-        print(
-            f"🟢 TP1: "
-            f"{validation['tp1']}"
-        )
-
-        print(
-            f"🔴 SL: "
-            f"{validation['sl']}"
-        )
-
-        print(
-            f"⚙️ Score >= "
-            f"{settings['min_score']}"
-        )
-
-        print(
-            f"🛑 ATR Stop = "
-            f"{settings['stop_multiplier']}"
-        )
-
-        print(
-            f"🎯 ATR TP2 = "
-            f"{settings['tp_multiplier']}"
-        )
-
     # =====================================================
-    # مجموع
+    # اگر نتیجه‌ای نبود
     # =====================================================
-
-    total_trades = 0
-    total_tp2 = 0
-    total_tp1 = 0
-    total_sl = 0
-    total_profit = 0.0
-
-    for item in results:
-
-        validation = item[
-            "validation"
-        ]
-
-        total_trades += validation[
-            "trades"
-        ]
-
-        total_tp2 += validation[
-            "tp2"
-        ]
-
-        total_tp1 += validation[
-            "tp1"
-        ]
-
-        total_sl += validation[
-            "sl"
-        ]
-
-        total_profit += validation[
-            "profit_r"
-        ]
-
+    if not all_results:
+        print(
+            "\n❌ هیچ نتیجه‌ای برای بک‌تست پیدا نشد."
+        )
+        return
+    # =====================================================
+    # رتبه‌بندی
+    # =====================================================
+    ranking = sorted(
+        all_results,
+        key=lambda x: (
+            x["rank_score"],
+            x["profit_r"],
+            x["win_rate"]
+        ),
+        reverse=True
+    )
+    print("\n\n")
+    print("=" * 60)
+    print("🏆 رتبه‌بندی ارزها")
+    print("=" * 60)
+    for position, result in enumerate(
+        ranking,
+        start=1
+    ):
+        profit = result["profit_r"]
+        if profit > 0:
+            emoji = "🟢"
+        elif profit < 0:
+            emoji = "🔴"
+        else:
+            emoji = "⚪"
+        print(
+            f"\n{position}. "
+            f"{emoji} "
+            f"{result['symbol']}"
+        )
+        print(
+            f"   معاملات: "
+            f"{result['trades']}"
+        )
+        print(
+            f"   TP2: "
+            f"{result['tp2']}"
+        )
+        print(
+            f"   TP1: "
+            f"{result['tp1']}"
+        )
+        print(
+            f"   SL: "
+            f"{result['sl']}"
+        )
+        print(
+            f"   Win Rate: "
+            f"{result['win_rate']:.2f}%"
+        )
+        print(
+            f"   Profit: "
+            f"{profit:.2f}R"
+        )
+    # =====================================================
+    # آمار کلی
+    # =====================================================
+    total_trades = sum(
+        x["trades"]
+        for x in all_results
+    )
+    total_tp2 = sum(
+        x["tp2"]
+        for x in all_results
+    )
+    total_tp1 = sum(
+        x["tp1"]
+        for x in all_results
+    )
+    total_sl = sum(
+        x["sl"]
+        for x in all_results
+    )
+    total_open = sum(
+        x["open"]
+        for x in all_results
+    )
+    total_profit = sum(
+        x["profit_r"]
+        for x in all_results
+    )
     completed = (
         total_tp2
         + total_tp1
         + total_sl
     )
-
     if completed > 0:
-
         overall_win_rate = (
             (
                 total_tp2
@@ -884,82 +489,67 @@ def main():
             )
             / completed
         ) * 100
-
     else:
-
         overall_win_rate = 0
-
+    print("\n")
+    print("=" * 60)
+    print("📈 گزارش نهایی")
+    print("=" * 60)
     print(
-        "\n\n"
-        + "=" * 65
-    )
-
-    print(
-        "📈 گزارش نهایی"
-    )
-
-    print(
-        "=" * 65
-    )
-
-    print(
-        f"📊 مجموع معاملات: "
+        f"📈 مجموع معاملات: "
         f"{total_trades}"
     )
-
     print(
         f"🟢 مجموع TP2: "
         f"{total_tp2}"
     )
-
     print(
         f"🟢 مجموع TP1: "
         f"{total_tp1}"
     )
-
     print(
         f"🔴 مجموع SL: "
         f"{total_sl}"
     )
-
+    print(
+        f"⚪ معاملات باز: "
+        f"{total_open}"
+    )
     print(
         f"🎯 Win Rate کلی: "
         f"{overall_win_rate:.2f}%"
     )
-
+    if total_profit > 0:
+        result_emoji = "🟢"
+    elif total_profit < 0:
+        result_emoji = "🔴"
+    else:
+        result_emoji = "⚪"
     print(
-        f"💰 نتیجه کلی: "
+        f"{result_emoji} نتیجه فرضی کلی: "
         f"{total_profit:.2f}R"
     )
-
+    # =====================================================
+    # بهترین ارز
+    # =====================================================
+    best = ranking[0]
+    print("\n")
+    print("=" * 60)
+    print("🥇 بهترین ارز")
+    print("=" * 60)
     print(
-        "\n"
-        + "=" * 65
+        f"🪙 {best['symbol']}"
     )
-
-    if total_profit > 0:
-
-        print(
-            "✅ نتیجه تست مثبت است."
-        )
-
-    elif total_profit == 0:
-
-        print(
-            "⚪ نتیجه تست سر به سر است."
-        )
-
-    else:
-
-        print(
-            "🔴 نتیجه تست هنوز منفی است."
-        )
-
     print(
-        "\n⚠️ نتیجه بک‌تست تضمین سود آینده نیست."
+        f"💰 Profit: "
+        f"{best['profit_r']:.2f}R"
     )
-
-
+    print(
+        f"🎯 Win Rate: "
+        f"{best['win_rate']:.2f}%"
+    )
+    print(
+        "\n⚠️ این بک‌تست تضمین‌کننده سود آینده نیست."
+    )
 if __name__ == "__main__":
-
     main()
