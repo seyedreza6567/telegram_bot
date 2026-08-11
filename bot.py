@@ -7,7 +7,10 @@ from telegram.ext import (
     filters,
 )
 from config import BOT_TOKEN
-from scanner import get_klines, get_futures_symbols
+from scanner import (
+    get_klines,
+    get_filtered_futures_symbols,
+)
 from analysis_engine import analyze
 from signal_engine import final_signal
 SYMBOL = "BTC-SWAP-USDT"
@@ -28,191 +31,6 @@ async def start(
         "انتخاب کن:",
         reply_markup=reply_markup
     )
-async def show_symbols(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    await update.message.reply_text(
-        "🔎 در حال دریافت ارزهای Futures از Toobit...\n"
-        "لطفاً صبر کن..."
-    )
-    try:
-        symbols = get_futures_symbols()
-        if not symbols:
-            await update.message.reply_text(
-                "❌ نتوانستم لیست ارزهای Futures را دریافت کنم."
-            )
-            return
-        # فعلاً فقط چند ارز اول برای تست
-        symbols = symbols[:12]
-        keyboard = []
-        row = []
-        for symbol in symbols:
-            # حذف بخش SWAP-USDT برای نمایش ساده‌تر
-            name = symbol.replace(
-                "-SWAP-USDT",
-                ""
-            )
-            row.append(name)
-            if len(row) == 3:
-                keyboard.append(row)
-                row = []
-        if row:
-            keyboard.append(row)
-        keyboard.append(
-            ["🔙 برگشت"]
-        )
-        reply_markup = ReplyKeyboardMarkup(
-            keyboard,
-            resize_keyboard=True
-        )
-        context.user_data["symbols"] = symbols
-        await update.message.reply_text(
-            "📊 ارز موردنظر را انتخاب کن:",
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        await update.message.reply_text(
-            f"❌ خطا در دریافت ارزها:\n{e}"
-        )
-async def show_timeframes(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-    symbol = context.user_data.get(
-        "selected_symbol"
-    )
-    if not symbol:
-        await show_symbols(
-            update,
-            context
-        )
-        return
-    keyboard = [
-        ["⏱️ 1H", "⏱️ 2H"],
-        ["⏱️ 3H", "⏱️ 4H"],
-        ["⏱️ 24H"],
-        ["🔙 برگشت"]
-    ]
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard,
-        resize_keyboard=True
-    )
-    name = symbol.replace(
-        "-SWAP-USDT",
-        ""
-    )
-    await update.message.reply_text(
-        f"📊 ارز انتخاب‌شده: {name}\n\n"
-        "⏱️ تایم‌فریم موردنظر را انتخاب کن:",
-        reply_markup=reply_markup
-    )
-async def analyze_selected_symbol(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    interval: str
-):
-    symbol = context.user_data.get(
-        "selected_symbol"
-    )
-    if not symbol:
-        await show_symbols(
-            update,
-            context
-        )
-        return
-    name = symbol.replace(
-        "-SWAP-USDT",
-        ""
-    )
-    await update.message.reply_text(
-        f"🔎 در حال تحلیل {name}...\n"
-        f"⏱️ تایم‌فریم: {interval}\n\n"
-        "لطفاً صبر کن..."
-    )
-    try:
-        df = get_klines(
-            symbol=symbol,
-            interval=interval,
-            limit=250
-        )
-        if df is None:
-            await update.message.reply_text(
-                "❌ دریافت اطلاعات بازار ناموفق بود."
-            )
-            return
-        result = analyze(df)
-        signal = result.get(
-            "signal",
-            "NO TRADE"
-        )
-        score = result.get(
-            "score",
-            0
-        )
-        confidence = result.get(
-            "confidence",
-            0
-        )
-        rsi = result.get(
-            "rsi",
-            "-"
-        )
-        price = result.get(
-            "price",
-            "-"
-        )
-        atr = result.get(
-            "atr",
-            "-"
-        )
-        stop_loss = result.get(
-            "stop_loss",
-            None
-        )
-        take_profit = result.get(
-            "take_profit",
-            None
-        )
-        reason = result.get(
-            "reason",
-            "-"
-        )
-        if signal == "LONG":
-            emoji = "🟢"
-        elif signal == "SHORT":
-            emoji = "🔴"
-        else:
-            emoji = "⚪"
-        message = (
-            f"📊 {name}/USDT\n\n"
-            f"⏱️ تایم‌فریم: {interval}\n"
-            f"{emoji} سیگنال: {signal}\n\n"
-            f"⭐ امتیاز: {score}\n"
-            f"📈 قدرت شرایط: {confidence}%\n"
-            f"📊 RSI: {rsi}\n"
-            f"💰 قیمت: {price}\n"
-            f"📏 ATR: {atr}\n"
-        )
-        if signal in [
-            "LONG",
-            "SHORT"
-        ]:
-            message += (
-                f"\n🛑 حد ضرر: {stop_loss}\n"
-                f"🎯 حد سود: {take_profit}\n"
-            )
-        message += (
-            f"\n📝 دلیل:\n{reason}\n\n"
-            "⚠️ فعلاً سفارش واقعی ارسال نمی‌شود."
-        )
-        await update.message.reply_text(
-            message
-        )
-    except Exception as e:
-        await update.message.reply_text(
-            f"❌ خطا در تحلیل:\n{e}"
-        )
 async def messages(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -222,68 +40,106 @@ async def messages(
     # سیگنال‌ها
     # =====================================================
     if text == "📈 سیگنال‌ها":
-        await show_symbols(
-            update,
-            context
+        await update.message.reply_text(
+            "🔎 در حال دریافت ارزهای Futures از Toobit...\n"
+            "لطفاً صبر کن..."
         )
+        try:
+            symbols = get_filtered_futures_symbols()
+            if not symbols:
+                await update.message.reply_text(
+                    "❌ هیچ قرارداد Futures مناسبی پیدا نشد."
+                )
+                return
+            # ذخیره لیست برای استفاده در انتخاب ارز
+            context.user_data["futures_symbols"] = symbols
+            # نمایش حداکثر 30 ارز در هر پیام
+            symbols_to_show = symbols[:30]
+            keyboard = []
+            row = []
+            for symbol in symbols_to_show:
+                # حذف پسوند -USDT برای نمایش زیباتر
+                display_name = symbol.replace(
+                    "-SWAP-USDT",
+                    ""
+                ).replace(
+                    "-USDT",
+                    ""
+                )
+                row.append(display_name)
+                if len(row) == 2:
+                    keyboard.append(row)
+                    row = []
+            if row:
+                keyboard.append(row)
+            keyboard.append(
+                ["🔙 برگشت"]
+            )
+            reply_markup = ReplyKeyboardMarkup(
+                keyboard,
+                resize_keyboard=True
+            )
+            await update.message.reply_text(
+                "📊 ارز موردنظر را انتخاب کن:",
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ خطا در دریافت ارزها:\n{e}"
+            )
         return
     # =====================================================
     # انتخاب ارز
     # =====================================================
     symbols = context.user_data.get(
-        "symbols",
+        "futures_symbols",
         []
     )
-    if text and symbols:
+    if symbols:
+        selected_symbol = None
         for symbol in symbols:
-            name = symbol.replace(
+            display_name = symbol.replace(
                 "-SWAP-USDT",
                 ""
+            ).replace(
+                "-USDT",
+                ""
             )
-            if text == name:
-                context.user_data[
-                    "selected_symbol"
-                ] = symbol
-                await show_timeframes(
-                    update,
-                    context
-                )
-                return
+            if text == display_name:
+                selected_symbol = symbol
+                break
+        if selected_symbol:
+            context.user_data[
+                "selected_symbol"
+            ] = selected_symbol
+            keyboard = [
+                ["⏱️ 1H", "⏱️ 2H"],
+                ["⏱️ 3H", "⏱️ 4H"],
+                ["⏱️ 24H"],
+                ["🔙 برگشت"]
+            ]
+            reply_markup = ReplyKeyboardMarkup(
+                keyboard,
+                resize_keyboard=True
+            )
+            await update.message.reply_text(
+                f"📊 ارز انتخاب‌شده:\n"
+                f"{selected_symbol}\n\n"
+                "⏱️ تایم‌فریم موردنظر را انتخاب کن:",
+                reply_markup=reply_markup
+            )
+            return
     # =====================================================
-    # انتخاب تایم‌فریم
-    # =====================================================
-    if text in [
-        "⏱️ 1H",
-        "⏱️ 2H",
-        "⏱️ 3H",
-        "⏱️ 4H",
-        "⏱️ 24H"
-    ]:
-        interval = text.replace(
-            "⏱️ ",
-            ""
-        ).lower()
-        if interval == "24h":
-            interval = "1d"
-        await analyze_selected_symbol(
-            update,
-            context,
-            interval
-        )
-        return
-    # =====================================================
-    # سیگنال نهایی فعلی BTC
+    # سیگنال نهایی
     # =====================================================
     if text == "🔥 سیگنال نهایی":
         await update.message.reply_text(
-            "🔎 در حال بررسی ۵ تایم‌فریم BTC...\n\n"
+            "🔎 در حال بررسی ۵ تایم‌فریم...\n\n"
             "1H → 2H → 3H → 4H → 1D\n\n"
             "لطفاً صبر کن..."
         )
         try:
-            result = final_signal(
-                SYMBOL
-            )
+            result = final_signal(SYMBOL)
             signal = result.get(
                 "signal",
                 "NO TRADE"
@@ -364,21 +220,134 @@ async def messages(
             )
         return
     # =====================================================
-    # قیمت‌ها
+    # تایم‌فریم
     # =====================================================
-    if text == "💰 قیمت‌ها":
+    if text in [
+        "⏱️ 1H",
+        "⏱️ 2H",
+        "⏱️ 3H",
+        "⏱️ 4H",
+        "⏱️ 24H"
+    ]:
+        interval = text.replace(
+            "⏱️ ",
+            ""
+        ).lower()
+        if interval == "24h":
+            interval = "1d"
+        selected_symbol = context.user_data.get(
+            "selected_symbol",
+            SYMBOL
+        )
+        await update.message.reply_text(
+            f"🔎 در حال تحلیل...\n"
+            f"📊 ارز: {selected_symbol}\n"
+            f"⏱️ تایم‌فریم: {interval}\n\n"
+            "لطفاً صبر کن..."
+        )
         try:
             df = get_klines(
-                symbol=SYMBOL,
+                symbol=selected_symbol,
+                interval=interval,
+                limit=250
+            )
+            if df is None:
+                await update.message.reply_text(
+                    "❌ دریافت اطلاعات بازار ناموفق بود."
+                )
+                return
+            result = analyze(df)
+            signal = result.get(
+                "signal",
+                "NO TRADE"
+            )
+            score = result.get(
+                "score",
+                0
+            )
+            confidence = result.get(
+                "confidence",
+                0
+            )
+            rsi = result.get(
+                "rsi",
+                "-"
+            )
+            price = result.get(
+                "price",
+                "-"
+            )
+            atr = result.get(
+                "atr",
+                "-"
+            )
+            stop_loss = result.get(
+                "stop_loss",
+                None
+            )
+            take_profit = result.get(
+                "take_profit",
+                None
+            )
+            reason = result.get(
+                "reason",
+                "-"
+            )
+            if signal == "LONG":
+                emoji = "🟢"
+            elif signal == "SHORT":
+                emoji = "🔴"
+            else:
+                emoji = "⚪"
+            message = (
+                f"📊 {selected_symbol}\n\n"
+                f"⏱️ تایم‌فریم: {interval}\n"
+                f"{emoji} سیگنال: {signal}\n\n"
+                f"⭐ امتیاز: {score}\n"
+                f"📈 قدرت شرایط: {confidence}%\n"
+                f"📊 RSI: {rsi}\n"
+                f"💰 قیمت: {price}\n"
+                f"📏 ATR: {atr}\n"
+            )
+            if signal in [
+                "LONG",
+                "SHORT"
+            ]:
+                message += (
+                    f"\n🛑 حد ضرر: {stop_loss}\n"
+                    f"🎯 حد سود: {take_profit}\n"
+                )
+            message += (
+                f"\n📝 دلیل:\n{reason}\n\n"
+                "⚠️ فعلاً سفارش واقعی ارسال نمی‌شود."
+            )
+            await update.message.reply_text(
+                message
+            )
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ خطا در تحلیل:\n{e}"
+            )
+        return
+    # =====================================================
+    # قیمت
+    # =====================================================
+    if text == "💰 قیمت‌ها":
+        selected_symbol = context.user_data.get(
+            "selected_symbol",
+            SYMBOL
+        )
+        try:
+            df = get_klines(
+                symbol=selected_symbol,
                 interval="1h",
                 limit=5
             )
             if df is not None:
-                price = df[
-                    "close"
-                ].iloc[-1]
+                price = df["close"].iloc[-1]
                 await update.message.reply_text(
-                    f"💰 قیمت BTC:\n\n{price}"
+                    f"💰 قیمت {selected_symbol}:\n\n"
+                    f"{price}"
                 )
             else:
                 await update.message.reply_text(
