@@ -2,12 +2,20 @@ import pandas as pd
 import numpy as np
 
 
+# =========================================================
+# EMA
+# =========================================================
+
 def calculate_ema(series, period):
     return series.ewm(
         span=period,
         adjust=False
     ).mean()
 
+
+# =========================================================
+# RSI
+# =========================================================
 
 def calculate_rsi(series, period=14):
 
@@ -36,17 +44,14 @@ def calculate_rsi(series, period=14):
     )
 
 
+# =========================================================
+# MACD
+# =========================================================
+
 def calculate_macd(series):
 
-    ema12 = calculate_ema(
-        series,
-        12
-    )
-
-    ema26 = calculate_ema(
-        series,
-        26
-    )
+    ema12 = calculate_ema(series, 12)
+    ema26 = calculate_ema(series, 26)
 
     macd = ema12 - ema26
 
@@ -59,6 +64,10 @@ def calculate_macd(series):
 
     return macd, signal, histogram
 
+
+# =========================================================
+# ATR
+# =========================================================
 
 def calculate_atr(df, period=14):
 
@@ -93,6 +102,10 @@ def calculate_atr(df, period=14):
         adjust=False
     ).mean()
 
+
+# =========================================================
+# ANALYSIS ENGINE
+# =========================================================
 
 def analyze(df):
 
@@ -144,32 +157,50 @@ def analyze(df):
         14
     )
 
+    df["volume_avg"] = (
+        df["volume"]
+        .rolling(20)
+        .mean()
+    )
+
     last = df.iloc[-1]
     previous = df.iloc[-2]
+    previous3 = df.iloc[-4]
     previous5 = df.iloc[-6]
 
-    price = float(
-        last["close"]
+    price = float(last["close"])
+    ema20 = float(last["ema20"])
+    ema50 = float(last["ema50"])
+    ema200 = float(last["ema200"])
+    rsi = float(last["rsi"])
+    atr = float(last["atr"])
+
+    macd = float(last["macd"])
+    macd_signal = float(last["macd_signal"])
+    macd_hist = float(last["macd_hist"])
+
+    previous_macd_hist = float(
+        previous["macd_hist"]
     )
 
-    ema20 = float(
-        last["ema20"]
+    previous3_ema20 = float(
+        previous3["ema20"]
     )
 
-    ema50 = float(
-        last["ema50"]
+    previous3_ema50 = float(
+        previous3["ema50"]
     )
 
-    ema200 = float(
-        last["ema200"]
+    previous5_close = float(
+        previous5["close"]
     )
 
-    rsi = float(
-        last["rsi"]
+    volume = float(
+        last["volume"]
     )
 
-    atr = float(
-        last["atr"]
+    volume_avg = float(
+        last["volume_avg"]
     )
 
     if not np.isfinite(rsi):
@@ -194,6 +225,31 @@ def analyze(df):
             "reason": "ATR نامعتبر"
         }
 
+    # =====================================================
+    # TREND STRENGTH
+    # =====================================================
+
+    ema_distance = abs(
+        ema20 - ema50
+    )
+
+    trend_strength = (
+        ema_distance / atr
+    )
+
+    # =====================================================
+    # MOMENTUM
+    # =====================================================
+
+    momentum = (
+        price -
+        previous5_close
+    ) / previous5_close
+
+    # =====================================================
+    # SCORES
+    # =====================================================
+
     long_score = 0
     short_score = 0
 
@@ -212,58 +268,64 @@ def analyze(df):
             "قیمت بالای EMA200"
         )
 
-    else:
-
-        long_score = 0
-
     if (
         ema20 > ema50
         and
         ema50 > ema200
     ):
 
-        long_score += 2
+        long_score += 3
 
         long_reasons.append(
-            "روند صعودی EMA"
+            "ساختار صعودی EMA"
         )
 
     if (
-        ema20 >
-        float(previous["ema20"])
-    ):
-
-        long_score += 1
-
-        long_reasons.append(
-            "EMA20 صعودی"
-        )
-
-    if (
-        ema50 >
-        float(previous["ema50"])
-    ):
-
-        long_score += 1
-
-        long_reasons.append(
-            "EMA50 صعودی"
-        )
-
-    if 52 <= rsi <= 65:
-
-        long_score += 2
-
-        long_reasons.append(
-            "RSI مناسب LONG"
-        )
-
-    if (
-        float(last["macd"])
-        >
-        float(last["macd_signal"])
+        ema20 > float(previous["ema20"])
         and
-        float(last["macd_hist"]) > 0
+        ema50 > float(previous["ema50"])
+    ):
+
+        long_score += 2
+
+        long_reasons.append(
+            "شیب EMA صعودی"
+        )
+
+    if (
+        ema20 > previous3_ema20
+        and
+        ema50 > previous3_ema50
+    ):
+
+        long_score += 1
+
+        long_reasons.append(
+            "روند کوتاه‌مدت صعودی"
+        )
+
+    if 53 <= rsi <= 63:
+
+        long_score += 2
+
+        long_reasons.append(
+            "RSI مناسب"
+        )
+
+    elif rsi > 68:
+
+        long_score -= 2
+
+    elif rsi < 45:
+
+        long_score -= 1
+
+    if (
+        macd > macd_signal
+        and
+        macd_hist > 0
+        and
+        macd_hist >= previous_macd_hist
     ):
 
         long_score += 2
@@ -272,24 +334,7 @@ def analyze(df):
             "MACD صعودی"
         )
 
-    if (
-        float(last["macd_hist"])
-        >
-        float(previous["macd_hist"])
-    ):
-
-        long_score += 1
-
-        long_reasons.append(
-            "قدرت MACD در حال افزایش"
-        )
-
-    momentum = (
-        price -
-        float(previous5["close"])
-    ) / float(previous5["close"])
-
-    if momentum > 0:
+    if momentum > 0.001:
 
         long_score += 1
 
@@ -297,9 +342,22 @@ def analyze(df):
             "مومنتوم مثبت"
         )
 
+    if (
+        np.isfinite(volume_avg)
+        and
+        volume_avg > 0
+        and
+        volume > volume_avg * 1.05
+    ):
+
+        long_score += 1
+
+        long_reasons.append(
+            "حجم تأییدکننده"
+        )
+
     # =====================================================
     # SHORT
-    # فعلاً بسیار سخت‌گیرانه
     # =====================================================
 
     if price < ema200:
@@ -316,43 +374,107 @@ def analyze(df):
         ema50 < ema200
     ):
 
-        short_score += 2
+        short_score += 3
 
         short_reasons.append(
-            "روند نزولی EMA"
+            "ساختار نزولی EMA"
         )
 
     if (
-        ema20 <
-        float(previous["ema20"])
-    ):
-
-        short_score += 1
-
-    if (
-        ema50 <
-        float(previous["ema50"])
-    ):
-
-        short_score += 1
-
-    if 35 <= rsi <= 48:
-
-        short_score += 2
-
-    if (
-        float(last["macd"])
-        <
-        float(last["macd_signal"])
+        ema20 < float(previous["ema20"])
         and
-        float(last["macd_hist"]) < 0
+        ema50 < float(previous["ema50"])
     ):
 
         short_score += 2
 
-    if momentum < 0:
+        short_reasons.append(
+            "شیب EMA نزولی"
+        )
+
+    if (
+        ema20 < previous3_ema20
+        and
+        ema50 < previous3_ema50
+    ):
 
         short_score += 1
+
+        short_reasons.append(
+            "روند کوتاه‌مدت نزولی"
+        )
+
+    if 37 <= rsi <= 47:
+
+        short_score += 2
+
+        short_reasons.append(
+            "RSI مناسب SHORT"
+        )
+
+    elif rsi < 32:
+
+        short_score -= 2
+
+    elif rsi > 55:
+
+        short_score -= 1
+
+    if (
+        macd < macd_signal
+        and
+        macd_hist < 0
+        and
+        macd_hist <= previous_macd_hist
+    ):
+
+        short_score += 2
+
+        short_reasons.append(
+            "MACD نزولی"
+        )
+
+    if momentum < -0.001:
+
+        short_score += 1
+
+        short_reasons.append(
+            "مومنتوم منفی"
+        )
+
+    if (
+        np.isfinite(volume_avg)
+        and
+        volume_avg > 0
+        and
+        volume > volume_avg * 1.05
+    ):
+
+        short_score += 1
+
+        short_reasons.append(
+            "حجم تأییدکننده"
+        )
+
+    # =====================================================
+    # بازار ضعیف
+    # =====================================================
+
+    if trend_strength < 0.30:
+
+        return {
+            "signal": "NO TRADE",
+            "score": max(
+                long_score,
+                short_score
+            ),
+            "confidence": 0,
+            "long_score": long_score,
+            "short_score": short_score,
+            "price": price,
+            "atr": atr,
+            "reason": "قدرت روند کافی نیست"
+        }
 
     # =====================================================
     # تصمیم
@@ -369,7 +491,7 @@ def analyze(df):
     )
 
     # =====================================================
-    # فقط LONG با کیفیت بالا
+    # LONG
     # =====================================================
 
     if (
@@ -400,7 +522,7 @@ def analyze(df):
             "score": long_score,
             "confidence": min(
                 100,
-                long_score * 10
+                long_score * 8
             ),
             "long_score": long_score,
             "short_score": short_score,
@@ -415,11 +537,11 @@ def analyze(df):
         }
 
     # =====================================================
-    # SHORT فقط در روند کاملاً نزولی
+    # SHORT
     # =====================================================
 
     if (
-        short_score >= 9
+        short_score >= 10
         and
         short_score > long_score
         and
@@ -446,7 +568,7 @@ def analyze(df):
             "score": short_score,
             "confidence": min(
                 100,
-                short_score * 10
+                short_score * 8
             ),
             "long_score": long_score,
             "short_score": short_score,
@@ -460,6 +582,10 @@ def analyze(df):
             )
         }
 
+    # =====================================================
+    # NO TRADE
+    # =====================================================
+
     return {
         "signal": "NO TRADE",
         "score": best_score,
@@ -472,8 +598,12 @@ def analyze(df):
     }
 
 
+# =========================================================
+# TEST
+# =========================================================
+
 if __name__ == "__main__":
 
     print(
-        "Analysis Engine FINAL TEST OK"
+        "Analysis Engine v4 OK"
     )
