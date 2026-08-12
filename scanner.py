@@ -208,12 +208,14 @@ def _get_raw_klines(
         df["open_time"] = pd.to_datetime(
             df["open_time"],
             unit="ms",
+            utc=True,
             errors="coerce"
         )
 
         df["close_time"] = pd.to_datetime(
             df["close_time"],
             unit="ms",
+            utc=True,
             errors="coerce"
         )
 
@@ -242,38 +244,23 @@ def _get_raw_klines(
         )
 
         # =================================================
-        # حذف آخرین کندل در حال تشکیل
+        # فقط کندل‌های کاملاً بسته
         # =================================================
 
-        if len(df) > 1:
+        now = pd.Timestamp.now(
+            tz="UTC"
+        )
 
-            now = pd.Timestamp.now(
-                tz="UTC"
-            )
-
-            close_times = (
-                df["close_time"]
-                .dt.tz_localize("UTC")
-            )
-
-            completed = (
-                close_times <= now
-            )
-
-            if completed.any():
-
-                last_completed = (
-                    completed[completed]
-                    .index[-1]
-                )
-
-                df = df.iloc[
-                    :last_completed + 1
-                ].copy()
+        df = df[
+            df["close_time"] <= now
+        ].copy()
 
         df = df.reset_index(
             drop=True
         )
+
+        if len(df) == 0:
+            return None
 
         return df.tail(
             limit
@@ -300,10 +287,14 @@ def _build_3h_from_1h(
     limit=250
 ):
 
+    source_limit = (
+        limit * 3 + 10
+    )
+
     df = _get_raw_klines(
         symbol=symbol,
         interval="1h",
-        limit=limit * 3 + 5
+        limit=source_limit
     )
 
     if df is None or len(df) < 3:
@@ -333,12 +324,34 @@ def _build_3h_from_1h(
         "taker_buy_quote_volume": "sum"
     })
 
+    # =====================================================
+    # فقط کندل‌هایی که واقعاً ۳ کندل 1H کامل دارند
+    # =====================================================
+
+    counts = df["close"].resample(
+        "3h",
+        label="left",
+        closed="left"
+    ).count()
+
+    result["source_count"] = counts
+
+    result = result[
+        result["source_count"] == 3
+    ].copy()
+
     result = result.dropna(
         subset=[
             "open",
             "high",
             "low",
             "close"
+        ]
+    )
+
+    result = result.drop(
+        columns=[
+            "source_count"
         ]
     )
 
@@ -361,7 +374,9 @@ def get_klines(
     limit=200
 ):
 
-    if interval.lower() == "3h":
+    interval = interval.lower()
+
+    if interval == "3h":
 
         return _build_3h_from_1h(
             symbol=symbol,
