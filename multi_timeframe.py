@@ -3,7 +3,7 @@ from analysis_engine import analyze
 
 
 # =========================================================
-# TIMEFRAMES
+# TIMEFRAME WEIGHTS
 # =========================================================
 
 TIMEFRAME_WEIGHTS = {
@@ -20,8 +20,41 @@ TIMEFRAME_WEIGHTS = {
 # =========================================================
 
 CANDLE_LIMIT = 300
-
 MIN_CANDLES = 250
+
+MAX_SCORE = 15.0
+
+
+# =========================================================
+# EMPTY RESULT
+# =========================================================
+
+def _empty_result(
+    timeframe,
+    weight,
+    reason
+):
+
+    return {
+        "signal": "NO TRADE",
+        "score": 0,
+        "confidence": 0,
+
+        "long_score": 0,
+        "short_score": 0,
+
+        "score_ratio": 0.0,
+        "quality": 0.0,
+
+        "weight": weight,
+        "timeframe": timeframe,
+
+        "price": None,
+        "atr": None,
+        "rsi": None,
+
+        "reason": reason
+    }
 
 
 # =========================================================
@@ -40,6 +73,10 @@ def analyze_timeframes(
             f"\nدر حال بررسی {timeframe} ..."
         )
 
+        # -------------------------------------------------
+        # FETCH DATA
+        # -------------------------------------------------
+
         try:
 
             df = get_klines(
@@ -50,14 +87,17 @@ def analyze_timeframes(
 
         except Exception as e:
 
-            results[timeframe] = {
-                "signal": "NO TRADE",
-                "score": 0,
-                "weight": weight,
-                "reason": f"خطای دریافت داده: {e}"
-            }
+            results[timeframe] = _empty_result(
+                timeframe,
+                weight,
+                f"خطای دریافت داده: {e}"
+            )
 
             continue
+
+        # -------------------------------------------------
+        # VALIDATE DATA
+        # -------------------------------------------------
 
         if (
             df is None
@@ -65,14 +105,17 @@ def analyze_timeframes(
             len(df) < MIN_CANDLES
         ):
 
-            results[timeframe] = {
-                "signal": "NO TRADE",
-                "score": 0,
-                "weight": weight,
-                "reason": "داده کافی نیست"
-            }
+            results[timeframe] = _empty_result(
+                timeframe,
+                weight,
+                "داده کافی نیست"
+            )
 
             continue
+
+        # -------------------------------------------------
+        # ANALYZE
+        # -------------------------------------------------
 
         try:
 
@@ -80,15 +123,89 @@ def analyze_timeframes(
 
         except Exception as e:
 
-            result = {
-                "signal": "NO TRADE",
-                "score": 0,
-                "weight": weight,
-                "reason": f"خطای تحلیل: {e}"
-            }
+            results[timeframe] = _empty_result(
+                timeframe,
+                weight,
+                f"خطای تحلیل: {e}"
+            )
 
-        result["weight"] = weight
+            continue
+
+        if not isinstance(
+            result,
+            dict
+        ):
+
+            results[timeframe] = _empty_result(
+                timeframe,
+                weight,
+                "خروجی تحلیل نامعتبر است"
+            )
+
+            continue
+
+        # -------------------------------------------------
+        # STANDARDIZE
+        # -------------------------------------------------
+
+        result = result.copy()
+
+        result["weight"] = float(
+            weight
+        )
+
         result["timeframe"] = timeframe
+
+        try:
+
+            score = float(
+                result.get(
+                    "score",
+                    0
+                )
+            )
+
+        except Exception:
+
+            score = 0.0
+
+        score = max(
+            0.0,
+            min(
+                score,
+                MAX_SCORE
+            )
+        )
+
+        result["score"] = score
+
+        # -------------------------------------------------
+        # QUALITY
+        # -------------------------------------------------
+
+        quality = (
+            score /
+            MAX_SCORE
+        )
+
+        if result.get(
+            "signal"
+        ) not in [
+            "LONG",
+            "SHORT"
+        ]:
+
+            quality = 0.0
+
+        result["score_ratio"] = round(
+            quality,
+            4
+        )
+
+        result["quality"] = round(
+            quality,
+            4
+        )
 
         results[timeframe] = result
 
@@ -129,6 +246,11 @@ if __name__ == "__main__":
         print(
             "Score:",
             result.get("score")
+        )
+
+        print(
+            "Quality:",
+            result.get("quality")
         )
 
         print(
