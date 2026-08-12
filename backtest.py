@@ -28,7 +28,7 @@ def safe_float(value):
 def main():
 
     print("\n" + "=" * 70)
-    print("🔬 SIGNAL DIAGNOSTIC TEST")
+    print("🔬 PURE SIGNAL TEST")
     print("=" * 70)
 
     df = get_klines(
@@ -38,124 +38,239 @@ def main():
     )
 
     if df is None:
-        print("❌ DATA ERROR")
+        print("DATA ERROR")
         return
 
-    print(f"📊 Candles: {len(df)}")
-    print(f"💰 Symbol: {SYMBOL}")
-    print(f"⏱️ Timeframe: {TIMEFRAME}")
+    print("Candles:", len(df))
+    print("Symbol:", SYMBOL)
+    print("Timeframe:", TIMEFRAME)
 
-    long_count = 0
-    short_count = 0
-    no_trade_count = 0
-
-    scores = []
-
-    print("\n" + "=" * 70)
-    print("📋 LAST SIGNALS")
-    print("=" * 70)
+    results = []
 
     for i in range(
         MIN_ANALYSIS_CANDLES,
-        len(df)
+        len(df) - 20
     ):
 
         historical_df = df.iloc[:i].copy()
 
         try:
 
-            result = analyze(
+            analysis = analyze(
                 historical_df
             )
 
         except Exception as e:
 
-            print("❌ ANALYSIS ERROR:", e)
+            print("ANALYSIS ERROR:", e)
             return
 
-        signal = result.get(
+        signal = analysis.get(
             "signal",
             "NO TRADE"
         )
 
-        score = result.get(
-            "score",
-            0
-        )
-
-        price = result.get(
-            "price",
-            0
-        )
-
-        rsi = result.get(
-            "rsi",
-            0
-        )
-
-        scores.append(
-            safe_float(score) or 0
-        )
-
-        if signal == "LONG":
-
-            long_count += 1
-
-        elif signal == "SHORT":
-
-            short_count += 1
-
-        else:
-
-            no_trade_count += 1
-
-        if signal in [
+        if signal not in [
             "LONG",
             "SHORT"
         ]:
 
-            next_open = safe_float(
-                df.iloc[i]["open"]
-            )
+            continue
 
-            print(
-                f"{i} | "
-                f"{signal:<5} | "
-                f"Score={score} | "
-                f"RSI={rsi} | "
-                f"SignalPrice={price} | "
-                f"NextOpen={next_open}"
-            )
+        entry = safe_float(
+            df.iloc[i]["open"]
+        )
+
+        if entry is None:
+            continue
+
+        future_5 = safe_float(
+            df.iloc[i + 5]["close"]
+        )
+
+        future_10 = safe_float(
+            df.iloc[i + 10]["close"]
+        )
+
+        future_20 = safe_float(
+            df.iloc[i + 20]["close"]
+        )
+
+        if (
+            future_5 is None
+            or future_10 is None
+            or future_20 is None
+        ):
+            continue
+
+        if signal == "LONG":
+
+            r5 = (
+                (future_5 - entry)
+                / entry
+            ) * 100
+
+            r10 = (
+                (future_10 - entry)
+                / entry
+            ) * 100
+
+            r20 = (
+                (future_20 - entry)
+                / entry
+            ) * 100
+
+        else:
+
+            r5 = (
+                (entry - future_5)
+                / entry
+            ) * 100
+
+            r10 = (
+                (entry - future_10)
+                / entry
+            ) * 100
+
+            r20 = (
+                (entry - future_20)
+                / entry
+            ) * 100
+
+        results.append({
+            "signal": signal,
+            "r5": r5,
+            "r10": r10,
+            "r20": r20
+        })
+
+    if not results:
+
+        print("\nNO SIGNALS")
+        return
+
+    data = pd.DataFrame(results)
+
+    long_data = data[
+        data["signal"] == "LONG"
+    ]
+
+    short_data = data[
+        data["signal"] == "SHORT"
+    ]
 
     print("\n" + "=" * 70)
     print("📊 RESULT")
     print("=" * 70)
 
     print(
-        f"🟢 LONG signals : {long_count}"
+        "Total Signals:",
+        len(data)
     )
 
     print(
-        f"🔴 SHORT signals: {short_count}"
+        "LONG:",
+        len(long_data)
     )
 
     print(
-        f"⚪ NO TRADE     : {no_trade_count}"
+        "SHORT:",
+        len(short_data)
     )
 
-    if scores:
+    print("\n--- 5 CANDLES ---")
+
+    print(
+        "Average:",
+        round(data["r5"].mean(), 3),
+        "%"
+    )
+
+    print(
+        "Positive:",
+        round(
+            (data["r5"] > 0).mean() * 100,
+            2
+        ),
+        "%"
+    )
+
+    print("\n--- 10 CANDLES ---")
+
+    print(
+        "Average:",
+        round(data["r10"].mean(), 3),
+        "%"
+    )
+
+    print(
+        "Positive:",
+        round(
+            (data["r10"] > 0).mean() * 100,
+            2
+        ),
+        "%"
+    )
+
+    print("\n--- 20 CANDLES ---")
+
+    print(
+        "Average:",
+        round(data["r20"].mean(), 3),
+        "%"
+    )
+
+    print(
+        "Positive:",
+        round(
+            (data["r20"] > 0).mean() * 100,
+            2
+        ),
+        "%"
+    )
+
+    if len(long_data) > 0:
+
+        print("\n🟢 LONG")
 
         print(
-            f"📈 Max Score    : {max(scores):.2f}"
+            "5:",
+            round(long_data["r5"].mean(), 3),
+            "%"
         )
 
         print(
-            f"📉 Min Score    : {min(scores):.2f}"
+            "10:",
+            round(long_data["r10"].mean(), 3),
+            "%"
         )
 
         print(
-            f"📊 Avg Score    : "
-            f"{np.mean(scores):.2f}"
+            "20:",
+            round(long_data["r20"].mean(), 3),
+            "%"
+        )
+
+    if len(short_data) > 0:
+
+        print("\n🔴 SHORT")
+
+        print(
+            "5:",
+            round(short_data["r5"].mean(), 3),
+            "%"
+        )
+
+        print(
+            "10:",
+            round(short_data["r10"].mean(), 3),
+            "%"
+        )
+
+        print(
+            "20:",
+            round(short_data["r20"].mean(), 3),
+            "%"
         )
 
     print("\n" + "=" * 70)
