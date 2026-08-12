@@ -3,6 +3,34 @@ from risk_manager import calculate_risk
 
 
 # =========================================================
+# SETTINGS
+# =========================================================
+
+MIN_QUALITY = 0.67
+
+MIN_LOWER_CONFIRMATIONS = 2
+
+MIN_DIRECTIONAL_RATIO = 0.60
+
+MIN_SCORE_MARGIN = 0.08
+
+
+# =========================================================
+# SAFE FLOAT
+# =========================================================
+
+def _safe_float(value):
+
+    try:
+
+        return float(value)
+
+    except Exception:
+
+        return 0.0
+
+
+# =========================================================
 # FINAL SIGNAL
 # =========================================================
 
@@ -14,17 +42,24 @@ def final_signal(
         symbol
     )
 
+    # =====================================================
+    # AGGREGATION
+    # =====================================================
+
     long_weight = 0.0
     short_weight = 0.0
 
-    long_score = 0.0
-    short_score = 0.0
+    long_quality = 0.0
+    short_quality = 0.0
 
-    valid_weight = 0.0
+    total_valid_weight = 0.0
 
-    # =====================================================
-    # COLLECT RESULTS
-    # =====================================================
+    long_count = 0
+    short_count = 0
+
+    # -----------------------------------------------------
+    # ONLY VALID SIGNALS
+    # -----------------------------------------------------
 
     for timeframe, result in results.items():
 
@@ -33,59 +68,75 @@ def final_signal(
             "NO TRADE"
         )
 
-        score = result.get(
-            "score",
-            0
+        weight = _safe_float(
+            result.get(
+                "weight",
+                0
+            )
         )
 
-        weight = result.get(
-            "weight",
-            1.0
+        quality = _safe_float(
+            result.get(
+                "quality",
+                result.get(
+                    "score_ratio",
+                    0
+                )
+            )
         )
-
-        try:
-
-            score = float(score)
-            weight = float(weight)
-
-        except Exception:
-
-            continue
 
         if weight <= 0:
             continue
 
-        if signal in [
+        if signal not in [
             "LONG",
             "SHORT"
         ]:
 
-            valid_weight += weight
+            # IMPORTANT:
+            # NO TRADE is NOT confirmation.
+            continue
+
+        if quality < 0:
+            quality = 0
+
+        if quality > 1:
+            quality = 1
+
+        total_valid_weight += weight
 
         if signal == "LONG":
 
+            long_count += 1
+
             long_weight += weight
 
-            long_score += (
-                score * weight
+            long_quality += (
+                quality *
+                weight
             )
 
         elif signal == "SHORT":
 
+            short_count += 1
+
             short_weight += weight
 
-            short_score += (
-                score * weight
+            short_quality += (
+                quality *
+                weight
             )
 
     # =====================================================
-    # TOTAL WEIGHT
+    # RATIOS
     # =====================================================
 
     total_weight = sum(
-        result.get(
-            "weight",
-            1.0
+        _safe_float(
+            result.get(
+                "weight",
+                0
+            )
         )
         for result in results.values()
     )
@@ -105,23 +156,129 @@ def final_signal(
     )
 
     # =====================================================
-    # HIGHER TIMEFRAME TREND
+    # NORMALIZED QUALITY
     # =====================================================
 
-    daily_signal = results.get(
+    if total_valid_weight > 0:
+
+        long_quality_ratio = (
+            long_quality /
+            total_valid_weight
+        )
+
+        short_quality_ratio = (
+            short_quality /
+            total_valid_weight
+        )
+
+    else:
+
+        long_quality_ratio = 0.0
+        short_quality_ratio = 0.0
+
+    # =====================================================
+    # HIGHER TIMEFRAME FILTER
+    # =====================================================
+
+    daily = results.get(
         "1d",
         {}
-    ).get(
+    )
+
+    four_hour = results.get(
+        "4h",
+        {}
+    )
+
+    daily_signal = daily.get(
         "signal",
         "NO TRADE"
     )
 
-    four_hour_signal = results.get(
-        "4h",
-        {}
-    ).get(
+    four_hour_signal = four_hour.get(
         "signal",
         "NO TRADE"
+    )
+
+    daily_quality = _safe_float(
+        daily.get(
+            "quality",
+            0
+        )
+    )
+
+    four_hour_quality = _safe_float(
+        four_hour.get(
+            "quality",
+            0
+        )
+    )
+
+    # =====================================================
+    # LOWER TIMEFRAME CONFIRMATION
+    # =====================================================
+
+    lower_long_count = 0
+    lower_short_count = 0
+
+    lower_long_weight = 0.0
+    lower_short_weight = 0.0
+
+    for timeframe in [
+        "1h",
+        "2h",
+        "3h"
+    ]:
+
+        result = results.get(
+            timeframe,
+            {}
+        )
+
+        signal = result.get(
+            "signal",
+            "NO TRADE"
+        )
+
+        quality = _safe_float(
+            result.get(
+                "quality",
+                0
+            )
+        )
+
+        weight = _safe_float(
+            result.get(
+                "weight",
+                0
+            )
+        )
+
+        if (
+            signal == "LONG"
+            and
+            quality >= MIN_QUALITY
+        ):
+
+            lower_long_count += 1
+            lower_long_weight += weight
+
+        elif (
+            signal == "SHORT"
+            and
+            quality >= MIN_QUALITY
+        ):
+
+            lower_short_count += 1
+            lower_short_weight += weight
+
+    # =====================================================
+    # SCORE MARGIN
+    # =====================================================
+
+    quality_margin = abs(
+        long_quality_ratio -
+        short_quality_ratio
     )
 
     # =====================================================
@@ -130,32 +287,103 @@ def final_signal(
 
     final = "NO TRADE"
 
+    # =====================================================
     # LONG
-    if (
-        long_ratio >= 0.60
+    # =====================================================
+
+    long_conditions = (
+
+        # Higher timeframe direction
+        daily_signal == "LONG"
+
         and
+
+        four_hour_signal == "LONG"
+
+        # Higher timeframe quality
+        and
+
+        daily_quality >= MIN_QUALITY
+
+        and
+
+        four_hour_quality >= MIN_QUALITY
+
+        # At least two lower TF confirmations
+        and
+
+        lower_long_count >= MIN_LOWER_CONFIRMATIONS
+
+        # Overall directional weight
+        and
+
+        long_ratio >= MIN_DIRECTIONAL_RATIO
+
+        and
+
         long_weight > short_weight
+
+        # Quality advantage
         and
-        daily_signal != "SHORT"
+
+        long_quality_ratio >
+        short_quality_ratio
+
         and
-        four_hour_signal != "SHORT"
-        and
-        long_score >= 35
-    ):
+
+        quality_margin >= MIN_SCORE_MARGIN
+    )
+
+    if long_conditions:
 
         final = "LONG"
 
+    # =====================================================
     # SHORT
-    elif (
-        short_ratio >= 0.60
+    # =====================================================
+
+    short_conditions = (
+
+        daily_signal == "SHORT"
+
         and
+
+        four_hour_signal == "SHORT"
+
+        and
+
+        daily_quality >= MIN_QUALITY
+
+        and
+
+        four_hour_quality >= MIN_QUALITY
+
+        and
+
+        lower_short_count >= MIN_LOWER_CONFIRMATIONS
+
+        and
+
+        short_ratio >= MIN_DIRECTIONAL_RATIO
+
+        and
+
         short_weight > long_weight
+
         and
-        daily_signal != "LONG"
+
+        short_quality_ratio >
+        long_quality_ratio
+
         and
-        four_hour_signal != "LONG"
+
+        quality_margin >= MIN_SCORE_MARGIN
+    )
+
+    if (
+        final == "NO TRADE"
         and
-        short_score >= 35
+        short_conditions
     ):
 
         final = "SHORT"
@@ -167,9 +395,7 @@ def final_signal(
     entry_price = None
     atr = None
 
-    # برای ورود از تایم‌فریم 1H استفاده می‌کنیم
-    # چون معامله در نزدیک‌ترین تایم‌فریم اجرا می‌شود.
-
+    # 1H is execution timeframe
     entry_data = results.get(
         "1h",
         {}
@@ -177,7 +403,9 @@ def final_signal(
 
     try:
 
-        if entry_data.get("price") is not None:
+        if entry_data.get(
+            "price"
+        ) is not None:
 
             entry_price = float(
                 entry_data["price"]
@@ -189,7 +417,9 @@ def final_signal(
 
     try:
 
-        if entry_data.get("atr") is not None:
+        if entry_data.get(
+            "atr"
+        ) is not None:
 
             atr = float(
                 entry_data["atr"]
@@ -199,7 +429,10 @@ def final_signal(
 
         atr = None
 
-    # اگر 1H موجود نبود، 2H
+    # -----------------------------------------------------
+    # FALLBACK
+    # -----------------------------------------------------
+
     if entry_price is None:
 
         for timeframe in [
@@ -216,15 +449,21 @@ def final_signal(
 
             try:
 
-                if data.get("price") is not None:
+                if data.get(
+                    "price"
+                ) is not None:
 
                     entry_price = float(
                         data["price"]
                     )
 
-                    atr = float(
-                        data.get("atr")
-                    )
+                    if data.get(
+                        "atr"
+                    ) is not None:
+
+                        atr = float(
+                            data["atr"]
+                        )
 
                     break
 
@@ -245,6 +484,8 @@ def final_signal(
         entry_price is not None
         and
         atr is not None
+        and
+        atr > 0
     ):
 
         risk = calculate_risk(
@@ -269,6 +510,7 @@ def final_signal(
     # =====================================================
 
     return {
+
         "signal": final,
 
         "long_weight": round(
@@ -291,23 +533,60 @@ def final_signal(
             3
         ),
 
-        "long_score": round(
-            long_score,
-            3
+        "long_quality": round(
+            long_quality_ratio,
+            4
         ),
 
-        "short_score": round(
-            short_score,
-            3
+        "short_quality": round(
+            short_quality_ratio,
+            4
         ),
 
-        "entry_price": entry_price,
+        "quality_margin": round(
+            quality_margin,
+            4
+        ),
 
-        "atr": atr,
+        "long_count": long_count,
 
-        "risk": risk,
+        "short_count": short_count,
 
-        "timeframes": results
+        "lower_long_count":
+            lower_long_count,
+
+        "lower_short_count":
+            lower_short_count,
+
+        "daily_signal":
+            daily_signal,
+
+        "daily_quality":
+            round(
+                daily_quality,
+                4
+            ),
+
+        "four_hour_signal":
+            four_hour_signal,
+
+        "four_hour_quality":
+            round(
+                four_hour_quality,
+                4
+            ),
+
+        "entry_price":
+            entry_price,
+
+        "atr":
+            atr,
+
+        "risk":
+            risk,
+
+        "timeframes":
+            results
     }
 
 
@@ -347,13 +626,40 @@ if __name__ == "__main__":
     )
 
     print(
-        "LONG SCORE:",
-        result["long_score"]
+        "LONG QUALITY:",
+        result["long_quality"]
     )
 
     print(
-        "SHORT SCORE:",
-        result["short_score"]
+        "SHORT QUALITY:",
+        result["short_quality"]
+    )
+
+    print(
+        "QUALITY MARGIN:",
+        result["quality_margin"]
+    )
+
+    print(
+        "DAILY:",
+        result["daily_signal"],
+        result["daily_quality"]
+    )
+
+    print(
+        "4H:",
+        result["four_hour_signal"],
+        result["four_hour_quality"]
+    )
+
+    print(
+        "LOWER LONG:",
+        result["lower_long_count"]
+    )
+
+    print(
+        "LOWER SHORT:",
+        result["lower_short_count"]
     )
 
     print(
