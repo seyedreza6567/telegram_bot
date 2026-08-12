@@ -34,9 +34,9 @@ def calculate_rsi(series, period=14):
         adjust=False
     ).mean()
 
-    rs = (
-        avg_gain /
-        avg_loss.replace(0, np.nan)
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
     )
 
     return 100 - (
@@ -73,10 +73,7 @@ def calculate_atr(df, period=14):
 
     previous_close = df["close"].shift(1)
 
-    tr1 = (
-        df["high"] -
-        df["low"]
-    )
+    tr1 = df["high"] - df["low"]
 
     tr2 = (
         df["high"] -
@@ -104,7 +101,7 @@ def calculate_atr(df, period=14):
 
 
 # =========================================================
-# ANALYSIS ENGINE
+# ANALYSIS
 # =========================================================
 
 def analyze(df):
@@ -148,9 +145,7 @@ def analyze(df):
         df["macd"],
         df["macd_signal"],
         df["macd_hist"]
-    ) = calculate_macd(
-        close
-    )
+    ) = calculate_macd(close)
 
     df["atr"] = calculate_atr(
         df,
@@ -169,9 +164,11 @@ def analyze(df):
     previous5 = df.iloc[-6]
 
     price = float(last["close"])
+
     ema20 = float(last["ema20"])
     ema50 = float(last["ema50"])
     ema200 = float(last["ema200"])
+
     rsi = float(last["rsi"])
     atr = float(last["atr"])
 
@@ -211,6 +208,9 @@ def analyze(df):
             "confidence": 0,
             "long_score": 0,
             "short_score": 0,
+            "price": price,
+            "atr": atr,
+            "rsi": rsi,
             "reason": "RSI نامعتبر"
         }
 
@@ -222,11 +222,14 @@ def analyze(df):
             "confidence": 0,
             "long_score": 0,
             "short_score": 0,
+            "price": price,
+            "rsi": rsi,
+            "atr": atr,
             "reason": "ATR نامعتبر"
         }
 
     # =====================================================
-    # TREND STRENGTH
+    # TREND
     # =====================================================
 
     ema_distance = abs(
@@ -242,13 +245,8 @@ def analyze(df):
     # =====================================================
 
     momentum = (
-        price -
-        previous5_close
+        price - previous5_close
     ) / previous5_close
-
-    # =====================================================
-    # SCORES
-    # =====================================================
 
     long_score = 0
     short_score = 0
@@ -472,13 +470,10 @@ def analyze(df):
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
+            "rsi": rsi,
             "atr": atr,
             "reason": "قدرت روند کافی نیست"
         }
-
-    # =====================================================
-    # تصمیم
-    # =====================================================
 
     best_score = max(
         long_score,
@@ -486,8 +481,7 @@ def analyze(df):
     )
 
     difference = abs(
-        long_score -
-        short_score
+        long_score - short_score
     )
 
     # =====================================================
@@ -502,20 +496,9 @@ def analyze(df):
         difference >= 3
     ):
 
-        stop_loss = (
-            price -
-            atr * 2
-        )
-
-        tp1 = (
-            price +
-            atr * 2
-        )
-
-        tp2 = (
-            price +
-            atr * 4
-        )
+        stop_loss = price - atr * 2
+        tp1 = price + atr * 2
+        tp2 = price + atr * 4
 
         return {
             "signal": "LONG",
@@ -527,6 +510,7 @@ def analyze(df):
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
+            "rsi": rsi,
             "atr": atr,
             "stop_loss": stop_loss,
             "tp1": tp1,
@@ -548,20 +532,9 @@ def analyze(df):
         difference >= 4
     ):
 
-        stop_loss = (
-            price +
-            atr * 2
-        )
-
-        tp1 = (
-            price -
-            atr * 2
-        )
-
-        tp2 = (
-            price -
-            atr * 4
-        )
+        stop_loss = price + atr * 2
+        tp1 = price - atr * 2
+        tp2 = price - atr * 4
 
         return {
             "signal": "SHORT",
@@ -573,6 +546,7 @@ def analyze(df):
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
+            "rsi": rsi,
             "atr": atr,
             "stop_loss": stop_loss,
             "tp1": tp1,
@@ -582,10 +556,6 @@ def analyze(df):
             )
         }
 
-    # =====================================================
-    # NO TRADE
-    # =====================================================
-
     return {
         "signal": "NO TRADE",
         "score": best_score,
@@ -593,17 +563,14 @@ def analyze(df):
         "long_score": long_score,
         "short_score": short_score,
         "price": price,
+        "rsi": rsi,
         "atr": atr,
         "reason": "شرایط ورود کامل نیست"
     }
 
 
-# =========================================================
-# TEST
-# =========================================================
-
 if __name__ == "__main__":
 
     print(
-        "Analysis Engine v4 OK"
+        "Analysis Engine OK"
     )
