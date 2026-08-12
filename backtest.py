@@ -5,13 +5,41 @@ from scanner import get_klines
 from analysis_engine import analyze
 
 
-SYMBOL = "BTC-SWAP-USDT"
+SYMBOLS = [
+    "BTC-SWAP-USDT",
+    "ETH-SWAP-USDT",
+    "BNB-SWAP-USDT",
+    "SOL-SWAP-USDT",
+    "XRP-SWAP-USDT",
+    "DOGE-SWAP-USDT",
+    "ADA-SWAP-USDT",
+    "TRX-SWAP-USDT",
+    "AVAX-SWAP-USDT",
+    "LINK-SWAP-USDT",
+    "DOT-SWAP-USDT",
+    "LTC-SWAP-USDT",
+    "BCH-SWAP-USDT",
+    "UNI-SWAP-USDT",
+    "SUI-SWAP-USDT",
+]
+
 TIMEFRAME = "1h"
 CANDLE_LIMIT = 1000
 MIN_ANALYSIS_CANDLES = 250
 
+SL_ATR = 2.0
+TP1_ATR = 2.0
+TP2_ATR = 4.0
 
-def safe_float(value):
+MAX_HOLD_CANDLES = 100
+
+TP1_PERCENT = 0.50
+TP2_PERCENT = 0.50
+
+COST_R = 0.05
+
+
+def safe_float(value, default=None):
 
     try:
         value = float(value)
@@ -22,48 +50,303 @@ def safe_float(value):
     except:
         pass
 
-    return None
+    return default
 
 
-def main():
+def symbol_name(symbol):
 
-    print("\n" + "=" * 70)
-    print("🔬 PURE SIGNAL TEST")
-    print("=" * 70)
+    return symbol.replace(
+        "-SWAP-USDT",
+        ""
+    )
+
+
+def same_candle_order(candle, signal):
+
+    o = safe_float(candle["open"])
+    c = safe_float(candle["close"])
+
+    if o is None or c is None:
+        return "SL"
+
+    if signal == "LONG":
+
+        if c >= o:
+            return "SL"
+
+        return "TP"
+
+    else:
+
+        if c >= o:
+            return "SL"
+
+        return "TP"
+
+
+def simulate_trade(df, entry_index, analysis):
+
+    signal = analysis["signal"]
+
+    entry = safe_float(
+        df.iloc[entry_index]["open"]
+    )
+
+    atr = safe_float(
+        analysis.get("atr")
+    )
+
+    if entry is None or atr is None or atr <= 0:
+        return None
+
+    if signal == "LONG":
+
+        sl = entry - atr * SL_ATR
+        tp1 = entry + atr * TP1_ATR
+        tp2 = entry + atr * TP2_ATR
+
+    else:
+
+        sl = entry + atr * SL_ATR
+        tp1 = entry - atr * TP1_ATR
+        tp2 = entry - atr * TP2_ATR
+
+    tp1_hit = False
+
+    last_index = min(
+        len(df),
+        entry_index + MAX_HOLD_CANDLES
+    )
+
+    for i in range(
+        entry_index,
+        last_index
+    ):
+
+        candle = df.iloc[i]
+
+        high = safe_float(
+            candle["high"]
+        )
+
+        low = safe_float(
+            candle["low"]
+        )
+
+        if high is None or low is None:
+            continue
+
+        if signal == "LONG":
+
+            if not tp1_hit:
+
+                hit_sl = low <= sl
+                hit_tp1 = high >= tp1
+
+                if hit_sl and hit_tp1:
+
+                    order = same_candle_order(
+                        candle,
+                        signal
+                    )
+
+                    if order == "SL":
+
+                        return {
+                            "result": "SL",
+                            "r": -1.0 - COST_R,
+                            "bars": i - entry_index
+                        }
+
+                    tp1_hit = True
+
+                    if high >= tp2:
+
+                        return {
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
+                            "bars": i - entry_index
+                        }
+
+                    continue
+
+                if hit_sl:
+
+                    return {
+                        "result": "SL",
+                        "r": -1.0 - COST_R,
+                        "bars": i - entry_index
+                    }
+
+                if hit_tp1:
+
+                    tp1_hit = True
+
+                    if high >= tp2:
+
+                        return {
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
+                            "bars": i - entry_index
+                        }
+
+                    continue
+
+            else:
+
+                if high >= tp2:
+
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": i - entry_index
+                    }
+
+                if low <= entry:
+
+                    return {
+                        "result": "TP1",
+                        "r": 0.5 - COST_R,
+                        "bars": i - entry_index
+                    }
+
+        else:
+
+            if not tp1_hit:
+
+                hit_sl = high >= sl
+                hit_tp1 = low <= tp1
+
+                if hit_sl and hit_tp1:
+
+                    order = same_candle_order(
+                        candle,
+                        signal
+                    )
+
+                    if order == "SL":
+
+                        return {
+                            "result": "SL",
+                            "r": -1.0 - COST_R,
+                            "bars": i - entry_index
+                        }
+
+                    tp1_hit = True
+
+                    if low <= tp2:
+
+                        return {
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
+                            "bars": i - entry_index
+                        }
+
+                    continue
+
+                if hit_sl:
+
+                    return {
+                        "result": "SL",
+                        "r": -1.0 - COST_R,
+                        "bars": i - entry_index
+                    }
+
+                if hit_tp1:
+
+                    tp1_hit = True
+
+                    if low <= tp2:
+
+                        return {
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
+                            "bars": i - entry_index
+                        }
+
+                    continue
+
+            else:
+
+                if low <= tp2:
+
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": i - entry_index
+                    }
+
+                if high >= entry:
+
+                    return {
+                        "result": "TP1",
+                        "r": 0.5 - COST_R,
+                        "bars": i - entry_index
+                    }
+
+    if tp1_hit:
+
+        return {
+            "result": "TP1",
+            "r": 0.5 - COST_R,
+            "bars": last_index - entry_index
+        }
+
+    return {
+        "result": "OPEN",
+        "r": 0.0,
+        "bars": last_index - entry_index
+    }
+
+
+def backtest_symbol(symbol):
+
+    print("\n" + "=" * 65)
+    print("BACKTEST:", symbol_name(symbol))
+    print("=" * 65)
 
     df = get_klines(
-        symbol=SYMBOL,
+        symbol=symbol,
         interval=TIMEFRAME,
         limit=CANDLE_LIMIT
     )
 
     if df is None:
         print("DATA ERROR")
-        return
+        return None
 
-    print("Candles:", len(df))
-    print("Symbol:", SYMBOL)
-    print("Timeframe:", TIMEFRAME)
+    if len(df) < MIN_ANALYSIS_CANDLES + 20:
 
-    results = []
+        print(
+            "NOT ENOUGH DATA:",
+            len(df)
+        )
 
-    for i in range(
-        MIN_ANALYSIS_CANDLES,
-        len(df) - 20
-    ):
+        return None
 
-        historical_df = df.iloc[:i].copy()
+    trades = []
+
+    i = MIN_ANALYSIS_CANDLES
+
+    while i < len(df) - 10:
+
+        historical = df.iloc[:i].copy()
 
         try:
 
             analysis = analyze(
-                historical_df
+                historical
             )
 
         except Exception as e:
 
-            print("ANALYSIS ERROR:", e)
-            return
+            print(
+                "ANALYSIS ERROR:",
+                e
+            )
+
+            i += 1
+            continue
 
         signal = analysis.get(
             "signal",
@@ -75,207 +358,343 @@ def main():
             "SHORT"
         ]:
 
+            i += 1
             continue
 
-        entry = safe_float(
-            df.iloc[i]["open"]
+        trade = simulate_trade(
+            df,
+            i,
+            analysis
         )
 
-        if entry is None:
+        if trade is None:
+
+            i += 1
             continue
 
-        future_5 = safe_float(
-            df.iloc[i + 5]["close"]
-        )
-
-        future_10 = safe_float(
-            df.iloc[i + 10]["close"]
-        )
-
-        future_20 = safe_float(
-            df.iloc[i + 20]["close"]
-        )
-
-        if (
-            future_5 is None
-            or future_10 is None
-            or future_20 is None
-        ):
-            continue
-
-        if signal == "LONG":
-
-            r5 = (
-                (future_5 - entry)
-                / entry
-            ) * 100
-
-            r10 = (
-                (future_10 - entry)
-                / entry
-            ) * 100
-
-            r20 = (
-                (future_20 - entry)
-                / entry
-            ) * 100
-
-        else:
-
-            r5 = (
-                (entry - future_5)
-                / entry
-            ) * 100
-
-            r10 = (
-                (entry - future_10)
-                / entry
-            ) * 100
-
-            r20 = (
-                (entry - future_20)
-                / entry
-            ) * 100
-
-        results.append({
+        trades.append({
             "signal": signal,
-            "r5": r5,
-            "r10": r10,
-            "r20": r20
+            "result": trade["result"],
+            "r": trade["r"],
+            "bars": trade["bars"]
         })
 
-    if not results:
+        i += max(
+            1,
+            trade["bars"]
+        )
 
-        print("\nNO SIGNALS")
-        return
+    if not trades:
 
-    data = pd.DataFrame(results)
+        print("NO TRADES")
+        return None
 
-    long_data = data[
-        data["signal"] == "LONG"
-    ]
+    data = pd.DataFrame(trades)
 
-    short_data = data[
-        data["signal"] == "SHORT"
-    ]
+    tp2 = len(
+        data[data["result"] == "TP2"]
+    )
 
-    print("\n" + "=" * 70)
-    print("📊 RESULT")
-    print("=" * 70)
+    tp1 = len(
+        data[data["result"] == "TP1"]
+    )
+
+    sl = len(
+        data[data["result"] == "SL"]
+    )
+
+    open_trades = len(
+        data[data["result"] == "OPEN"]
+    )
+
+    long_count = len(
+        data[data["signal"] == "LONG"]
+    )
+
+    short_count = len(
+        data[data["signal"] == "SHORT"]
+    )
+
+    completed = tp1 + tp2 + sl
+
+    wins = tp1 + tp2
+
+    if completed > 0:
+
+        win_rate = (
+            wins /
+            completed
+        ) * 100
+
+    else:
+
+        win_rate = 0
+
+    total_r = data["r"].sum()
+
+    avg_hold = data["bars"].mean()
 
     print(
-        "Total Signals:",
+        "Trades:",
         len(data)
     )
 
     print(
         "LONG:",
-        len(long_data)
+        long_count
     )
 
     print(
         "SHORT:",
-        len(short_data)
+        short_count
     )
 
-    print("\n--- 5 CANDLES ---")
+    print(
+        "TP2:",
+        tp2
+    )
 
     print(
-        "Average:",
-        round(data["r5"].mean(), 3),
+        "TP1:",
+        tp1
+    )
+
+    print(
+        "SL:",
+        sl
+    )
+
+    print(
+        "OPEN:",
+        open_trades
+    )
+
+    print(
+        "Win Rate:",
+        round(win_rate, 2),
         "%"
     )
 
     print(
-        "Positive:",
+        "Profit:",
+        round(total_r, 2),
+        "R"
+    )
+
+    print(
+        "Average Hold:",
+        round(avg_hold, 1),
+        "candles"
+    )
+
+    return {
+        "symbol": symbol,
+        "trades": len(data),
+        "long": long_count,
+        "short": short_count,
+        "tp2": tp2,
+        "tp1": tp1,
+        "sl": sl,
+        "open": open_trades,
+        "win_rate": win_rate,
+        "profit": total_r,
+        "avg_hold": avg_hold
+    }
+
+
+def main():
+
+    print("\n" + "=" * 65)
+    print("🚀 REAL SL/TP BACKTEST")
+    print("=" * 65)
+
+    print(
+        "Timeframe:",
+        TIMEFRAME
+    )
+
+    print(
+        "SL:",
+        SL_ATR,
+        "ATR"
+    )
+
+    print(
+        "TP1:",
+        TP1_ATR,
+        "ATR"
+    )
+
+    print(
+        "TP2:",
+        TP2_ATR,
+        "ATR"
+    )
+
+    print(
+        "Cost:",
+        COST_R,
+        "R"
+    )
+
+    results = []
+
+    for symbol in SYMBOLS:
+
+        try:
+
+            result = backtest_symbol(
+                symbol
+            )
+
+            if result is not None:
+
+                results.append(
+                    result
+                )
+
+        except Exception as e:
+
+            print(
+                "ERROR:",
+                symbol,
+                e
+            )
+
+    if not results:
+
+        print("\nNO RESULTS")
+        return
+
+    results = sorted(
+        results,
+        key=lambda x: x["profit"],
+        reverse=True
+    )
+
+    print("\n\n" + "=" * 65)
+    print("🏆 FINAL RESULT")
+    print("=" * 65)
+
+    total_trades = sum(
+        x["trades"]
+        for x in results
+    )
+
+    total_tp2 = sum(
+        x["tp2"]
+        for x in results
+    )
+
+    total_tp1 = sum(
+        x["tp1"]
+        for x in results
+    )
+
+    total_sl = sum(
+        x["sl"]
+        for x in results
+    )
+
+    total_profit = sum(
+        x["profit"]
+        for x in results
+    )
+
+    completed = (
+        total_tp2 +
+        total_tp1 +
+        total_sl
+    )
+
+    wins = (
+        total_tp2 +
+        total_tp1
+    )
+
+    if completed > 0:
+
+        overall_win = (
+            wins /
+            completed
+        ) * 100
+
+    else:
+
+        overall_win = 0
+
+    print(
+        "TOTAL TRADES:",
+        total_trades
+    )
+
+    print(
+        "TP2:",
+        total_tp2
+    )
+
+    print(
+        "TP1:",
+        total_tp1
+    )
+
+    print(
+        "SL:",
+        total_sl
+    )
+
+    print(
+        "WIN RATE:",
         round(
-            (data["r5"] > 0).mean() * 100,
+            overall_win,
             2
         ),
         "%"
     )
 
-    print("\n--- 10 CANDLES ---")
-
     print(
-        "Average:",
-        round(data["r10"].mean(), 3),
-        "%"
-    )
-
-    print(
-        "Positive:",
+        "TOTAL PROFIT:",
         round(
-            (data["r10"] > 0).mean() * 100,
+            total_profit,
             2
         ),
-        "%"
+        "R"
     )
 
-    print("\n--- 20 CANDLES ---")
+    print("\nRANKING:")
 
-    print(
-        "Average:",
-        round(data["r20"].mean(), 3),
-        "%"
-    )
-
-    print(
-        "Positive:",
-        round(
-            (data["r20"] > 0).mean() * 100,
-            2
-        ),
-        "%"
-    )
-
-    if len(long_data) > 0:
-
-        print("\n🟢 LONG")
+    for n, result in enumerate(
+        results,
+        1
+    ):
 
         print(
-            "5:",
-            round(long_data["r5"].mean(), 3),
-            "%"
+            n,
+            symbol_name(
+                result["symbol"]
+            ),
+            "|",
+            "Trades:",
+            result["trades"],
+            "|",
+            "Win:",
+            round(
+                result["win_rate"],
+                2
+            ),
+            "%",
+            "|",
+            "Profit:",
+            round(
+                result["profit"],
+                2
+            ),
+            "R"
         )
 
-        print(
-            "10:",
-            round(long_data["r10"].mean(), 3),
-            "%"
-        )
-
-        print(
-            "20:",
-            round(long_data["r20"].mean(), 3),
-            "%"
-        )
-
-    if len(short_data) > 0:
-
-        print("\n🔴 SHORT")
-
-        print(
-            "5:",
-            round(short_data["r5"].mean(), 3),
-            "%"
-        )
-
-        print(
-            "10:",
-            round(short_data["r10"].mean(), 3),
-            "%"
-        )
-
-        print(
-            "20:",
-            round(short_data["r20"].mean(), 3),
-            "%"
-        )
-
-    print("\n" + "=" * 70)
-    print("✅ TEST FINISHED")
-    print("=" * 70)
+    print("\n" + "=" * 65)
+    print("✅ BACKTEST FINISHED")
+    print("=" * 65)
 
 
 if __name__ == "__main__":
