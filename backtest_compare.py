@@ -55,7 +55,6 @@ def safe_float(value):
         value = float(value)
 
         if np.isfinite(value):
-
             return value
 
     except Exception:
@@ -80,16 +79,14 @@ def symbol_name(symbol):
 # =========================================================
 # MODEL A
 #
-# Entry
 # SL = 2 ATR
 # TP1 = 2 ATR
 # TP2 = 4 ATR
 #
-# بعد از TP1:
-# نصف معامله بسته شده
+# بعد TP1:
+# نصف پوزیشن بسته می‌شود
 # نصف باقی‌مانده BE
 #
-# نتیجه:
 # SL  = -1R
 # TP1 = +0.5R
 # TP2 = +1.5R
@@ -162,9 +159,8 @@ def simulate_model_a(
                 hit_sl = low <= sl
                 hit_tp1 = high >= tp1
 
-                # محافظه‌کارانه:
-                # اگر هر دو در یک کندل باشند،
-                # SL را اول در نظر می‌گیریم.
+                # اگر SL و TP1 در یک کندل باشند
+                # SL اول در نظر گرفته می‌شود.
 
                 if hit_sl:
 
@@ -178,7 +174,7 @@ def simulate_model_a(
 
                     tp1_hit = True
 
-                    # TP2 در همان کندل
+                    # اگر TP2 هم در همان کندل لمس شود
                     if high >= tp2:
 
                         return {
@@ -193,6 +189,9 @@ def simulate_model_a(
 
                 hit_be = low <= entry
                 hit_tp2 = high >= tp2
+
+                # اگر BE و TP2 در یک کندل باشند
+                # BE اول در نظر گرفته می‌شود.
 
                 if hit_be:
 
@@ -282,12 +281,12 @@ def simulate_model_a(
 # TP2 = 4 ATR
 #
 # بعد TP1:
-# نصف معامله بسته می‌شود
+# نصف پوزیشن بسته می‌شود
 # نصف باقی‌مانده SL اولیه را حفظ می‌کند
 #
-# TP1 +0.5R
-# اگر باقی‌مانده به SL برسد:
-# مجموع معامله = -0.5R
+# TP1 = +0.5R
+# سپس SL = -0.5R مجموع
+# TP2 = +1.5R
 # =========================================================
 
 def simulate_model_b(
@@ -469,10 +468,11 @@ def simulate_model_b(
 #
 # SL = 2 ATR
 # TP = 4 ATR
+#
 # بدون TP1
 #
-# TP = +2R
 # SL = -1R
+# TP = +2R
 # =========================================================
 
 def simulate_model_c(
@@ -614,10 +614,6 @@ def calculate_stats(trades):
     sl = 0
     timeout = 0
 
-    # =====================================================
-    # سود فقط از تک تک معاملات
-    # =====================================================
-
     for trade in trades:
 
         result = trade.get(
@@ -626,11 +622,13 @@ def calculate_stats(trades):
         )
 
         r = safe_float(
-            trade.get("r", 0.0)
+            trade.get(
+                "r",
+                0.0
+            )
         )
 
         if r is None:
-
             r = 0.0
 
         total_profit += r
@@ -655,21 +653,7 @@ def calculate_stats(trades):
 
             timeout += 1
 
-    # =====================================================
-    # تعداد واقعی
-    # =====================================================
-
-    total_trades = (
-        tp2 +
-        tp1 +
-        tp +
-        sl +
-        timeout
-    )
-
-    # =====================================================
-    # WIN RATE
-    # =====================================================
+    total_trades = len(trades)
 
     wins = (
         tp2 +
@@ -688,44 +672,95 @@ def calculate_stats(trades):
         else 0.0
     )
 
-    # =====================================================
-    # SANITY CHECK
-    # =====================================================
-
-    if total_trades != len(trades):
-
-        print(
-            "\nWARNING: TRADE COUNT MISMATCH"
-        )
-
-        print(
-            "Raw trades:",
-            len(trades)
-        )
-
-        print(
-            "Calculated:",
-            total_trades
-        )
-
     return {
-
         "trades": total_trades,
-
         "tp2": tp2,
-
         "tp1": tp1,
-
         "tp": tp,
-
         "sl": sl,
-
         "timeout": timeout,
-
         "win_rate": win_rate,
-
         "profit": total_profit
     }
+
+
+# =========================================================
+# GENERATE COMMON ENTRIES
+#
+# مهم:
+# این تابع فقط Entry ها را پیدا می‌کند.
+#
+# هیچ مدل خروجی در این مرحله دخالت ندارد.
+# =========================================================
+
+def generate_entries(df):
+
+    entries = []
+
+    i = MIN_ANALYSIS_CANDLES
+
+    while i < len(df) - 1:
+
+        historical = df.iloc[:i].copy()
+
+        try:
+
+            analysis = analyze(
+                historical
+            )
+
+        except Exception as e:
+
+            print(
+                "ANALYSIS ERROR AT:",
+                i,
+                "|",
+                e
+            )
+
+            i += 1
+            continue
+
+        if not isinstance(
+            analysis,
+            dict
+        ):
+
+            i += 1
+            continue
+
+        signal = analysis.get(
+            "signal",
+            "NO TRADE"
+        )
+
+        if signal not in [
+            "LONG",
+            "SHORT"
+        ]:
+
+            i += 1
+            continue
+
+        atr = safe_float(
+            analysis.get("atr")
+        )
+
+        if atr is None or atr <= 0:
+
+            i += 1
+            continue
+
+        entries.append({
+            "index": i,
+            "signal": signal,
+            "atr": atr
+        })
+
+        # هر کندل فقط یک بار بررسی می‌شود.
+        i += 1
+
+    return entries
 
 
 # =========================================================
@@ -739,7 +774,7 @@ def backtest_symbol(symbol):
     )
 
     print(
-        "BACKTEST:",
+        "BACKTEST COMPARE:",
         symbol_name(symbol)
     )
 
@@ -778,85 +813,50 @@ def backtest_symbol(symbol):
         drop=True
     )
 
-    model_trades = {
+    # =====================================================
+    # COMMON ENTRIES
+    # =====================================================
 
+    entries = generate_entries(
+        df
+    )
+
+    print(
+        "COMMON ENTRIES:",
+        len(entries)
+    )
+
+    if not entries:
+
+        return {
+            "A": calculate_stats([]),
+            "B": calculate_stats([]),
+            "C": calculate_stats([])
+        }
+
+    model_trades = {
         "A": [],
         "B": [],
         "C": []
     }
 
     # =====================================================
-    # ENTRY LOOP
+    # SAME ENTRIES FOR ALL MODELS
     # =====================================================
 
-    i = MIN_ANALYSIS_CANDLES
+    for entry in entries:
 
-    while i < len(df) - 1:
-
-        historical = df.iloc[:i].copy()
-
-        try:
-
-            analysis = analyze(
-                historical
-            )
-
-        except Exception as e:
-
-            print(
-                "ANALYSIS ERROR:",
-                e
-            )
-
-            i += 1
-
-            continue
-
-        signal = analysis.get(
-            "signal",
-            "NO TRADE"
-        )
-
-        if signal not in [
-            "LONG",
-            "SHORT"
-        ]:
-
-            i += 1
-
-            continue
-
-        atr = safe_float(
-            analysis.get("atr")
-        )
-
-        if atr is None or atr <= 0:
-
-            i += 1
-
-            continue
+        entry_index = entry["index"]
+        signal = entry["signal"]
+        atr = entry["atr"]
 
         # =================================================
-        # SAME ENTRY FOR ALL MODELS
+        # MODEL A
         # =================================================
 
         trade_a = simulate_model_a(
             df,
-            i,
-            signal,
-            atr
-        )
-
-        trade_b = simulate_model_b(
-            df,
-            i,
-            signal,
-            atr
-        )
-
-        trade_c = simulate_model_c(
-            df,
-            i,
+            entry_index,
             signal,
             atr
         )
@@ -867,11 +867,33 @@ def backtest_symbol(symbol):
                 trade_a
             )
 
+        # =================================================
+        # MODEL B
+        # =================================================
+
+        trade_b = simulate_model_b(
+            df,
+            entry_index,
+            signal,
+            atr
+        )
+
         if trade_b is not None:
 
             model_trades["B"].append(
                 trade_b
             )
+
+        # =================================================
+        # MODEL C
+        # =================================================
+
+        trade_c = simulate_model_c(
+            df,
+            entry_index,
+            signal,
+            atr
+        )
 
         if trade_c is not None:
 
@@ -879,34 +901,11 @@ def backtest_symbol(symbol):
                 trade_c
             )
 
-        # =================================================
-        # NO OVERLAPPING ENTRY
-        #
-        # مدل A معیار حرکت به فرصت بعدی است.
-        # =================================================
-
-        if trade_a is not None:
-
-            bars = trade_a.get(
-                "bars",
-                1
-            )
-
-            i += max(
-                1,
-                int(bars)
-            )
-
-        else:
-
-            i += 1
-
     # =====================================================
     # STATS
     # =====================================================
 
     return {
-
         "A": calculate_stats(
             model_trades["A"]
         ),
@@ -973,7 +972,6 @@ def main():
             )
 
             if result is None:
-
                 continue
 
             for model in [
@@ -1004,6 +1002,7 @@ def main():
             print(
                 "\nERROR:",
                 symbol,
+                "|",
                 e
             )
 
@@ -1049,7 +1048,7 @@ def main():
         )
 
         # =================================================
-        # مستقل از هر محاسبه قبلی
+        # EXPECTED PROFIT
         # =================================================
 
         if model == "A":
@@ -1079,10 +1078,6 @@ def main():
                 +
                 d["sl"] * (-1.0 - COST_R)
             )
-
-        # =================================================
-        # اختلاف کنترل
-        # =================================================
 
         difference = (
             d["profit"] -
@@ -1161,7 +1156,7 @@ def main():
         )
 
     # =====================================================
-    # FINAL CHECK
+    # FINAL CONSISTENCY CHECK
     # =====================================================
 
     print(
@@ -1176,12 +1171,16 @@ def main():
         "=" * 65
     )
 
+    a_trades = totals["A"]["trades"]
+    b_trades = totals["B"]["trades"]
+    c_trades = totals["C"]["trades"]
+
     if (
-        totals["A"]["trades"]
+        a_trades
         ==
-        totals["B"]["trades"]
+        b_trades
         ==
-        totals["C"]["trades"]
+        c_trades
     ):
 
         print(
@@ -1190,7 +1189,7 @@ def main():
 
         print(
             "COMMON TRADES:",
-            totals["A"]["trades"]
+            a_trades
         )
 
     else:
@@ -1201,17 +1200,50 @@ def main():
 
         print(
             "A:",
-            totals["A"]["trades"]
+            a_trades
         )
 
         print(
             "B:",
-            totals["B"]["trades"]
+            b_trades
         )
 
         print(
             "C:",
-            totals["C"]["trades"]
+            c_trades
+        )
+
+    # =====================================================
+    # FINAL SUMMARY
+    # =====================================================
+
+    print(
+        "\n" + "=" * 65
+    )
+
+    print(
+        "FINAL PROFIT SUMMARY"
+    )
+
+    print(
+        "=" * 65
+    )
+
+    for model in [
+        "A",
+        "B",
+        "C"
+    ]:
+
+        print(
+            "MODEL",
+            model,
+            "=>",
+            round(
+                totals[model]["profit"],
+                2
+            ),
+            "R"
         )
 
     print(
@@ -1219,7 +1251,7 @@ def main():
     )
 
     print(
-        "✅ BACKTEST FINISHED"
+        "✅ BACKTEST COMPARE FINISHED"
     )
 
     print(
