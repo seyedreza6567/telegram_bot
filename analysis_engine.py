@@ -6,9 +6,9 @@ import numpy as np
 # EMA
 # =========================================================
 
-def calculate_ema(df, period):
+def ema(series, period):
 
-    return df["close"].ewm(
+    return series.ewm(
         span=period,
         adjust=False
     ).mean()
@@ -18,9 +18,9 @@ def calculate_ema(df, period):
 # RSI
 # =========================================================
 
-def calculate_rsi(df, period=14):
+def rsi(series, period=14):
 
-    delta = df["close"].diff()
+    delta = series.diff()
 
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -35,9 +35,9 @@ def calculate_rsi(df, period=14):
         adjust=False
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(
-        0,
-        np.nan
+    rs = (
+        avg_gain /
+        avg_loss.replace(0, np.nan)
     )
 
     return 100 - (
@@ -46,95 +46,23 @@ def calculate_rsi(df, period=14):
 
 
 # =========================================================
-# MACD
-# =========================================================
-
-def calculate_macd(df):
-
-    ema12 = calculate_ema(df, 12)
-    ema26 = calculate_ema(df, 26)
-
-    macd = ema12 - ema26
-
-    signal = macd.ewm(
-        span=9,
-        adjust=False
-    ).mean()
-
-    histogram = macd - signal
-
-    return macd, signal, histogram
-
-
-# =========================================================
 # ATR
 # =========================================================
 
-def calculate_atr(df, period=14):
+def atr(df, period=14):
 
-    previous_close = df["close"].shift(1)
+    prev_close = df["close"].shift(1)
 
     tr1 = df["high"] - df["low"]
 
     tr2 = (
         df["high"] -
-        previous_close
+        prev_close
     ).abs()
 
     tr3 = (
         df["low"] -
-        previous_close
-    ).abs()
-
-    true_range = pd.concat(
-        [tr1, tr2, tr3],
-        axis=1
-    ).max(axis=1)
-
-    return true_range.ewm(
-        alpha=1 / period,
-        adjust=False
-    ).mean()
-
-
-# =========================================================
-# ADX
-# =========================================================
-
-def calculate_adx(df, period=14):
-
-    high = df["high"]
-    low = df["low"]
-    close = df["close"]
-
-    up_move = high.diff()
-
-    down_move = -low.diff()
-
-    plus_dm = np.where(
-        (up_move > down_move) &
-        (up_move > 0),
-        up_move,
-        0
-    )
-
-    minus_dm = np.where(
-        (down_move > up_move) &
-        (down_move > 0),
-        down_move,
-        0
-    )
-
-    tr1 = high - low
-
-    tr2 = (
-        high -
-        close.shift(1)
-    ).abs()
-
-    tr3 = (
-        low -
-        close.shift(1)
+        prev_close
     ).abs()
 
     tr = pd.concat(
@@ -142,168 +70,198 @@ def calculate_adx(df, period=14):
         axis=1
     ).max(axis=1)
 
-    atr = tr.ewm(
-        alpha=1 / period,
-        adjust=False
-    ).mean()
-
-    plus_dm = pd.Series(
-        plus_dm,
-        index=df.index
-    )
-
-    minus_dm = pd.Series(
-        minus_dm,
-        index=df.index
-    )
-
-    plus_di = (
-        100 *
-        plus_dm.ewm(
-            alpha=1 / period,
-            adjust=False
-        ).mean()
-        /
-        atr.replace(0, np.nan)
-    )
-
-    minus_di = (
-        100 *
-        minus_dm.ewm(
-            alpha=1 / period,
-            adjust=False
-        ).mean()
-        /
-        atr.replace(0, np.nan)
-    )
-
-    dx = (
-        100 *
-        (plus_di - minus_di).abs()
-        /
-        (plus_di + minus_di).replace(
-            0,
-            np.nan
-        )
-    )
-
-    return dx.ewm(
+    return tr.ewm(
         alpha=1 / period,
         adjust=False
     ).mean()
 
 
 # =========================================================
-# ANALYSIS
+# MACD
+# =========================================================
+
+def macd(series):
+
+    fast = ema(
+        series,
+        12
+    )
+
+    slow = ema(
+        series,
+        26
+    )
+
+    line = fast - slow
+
+    signal = ema(
+        line,
+        9
+    )
+
+    hist = line - signal
+
+    return line, signal, hist
+
+
+# =========================================================
+# ANALYZE
 # =========================================================
 
 def analyze(df):
 
-    if df is None or len(df) < 250:
+    if df is None:
+        return {
+            "signal": "NO TRADE",
+            "score": 0,
+            "confidence": 0,
+            "reason": "No data"
+        }
+
+    if len(df) < 250:
 
         return {
             "signal": "NO TRADE",
             "score": 0,
             "confidence": 0,
-            "reason": "داده کافی نیست"
+            "reason": "Not enough data"
         }
 
     df = df.copy()
+
+    close = df["close"]
 
     # =====================================================
     # Indicators
     # =====================================================
 
-    df["EMA20"] = calculate_ema(
-        df,
+    df["ema20"] = ema(
+        close,
         20
     )
 
-    df["EMA50"] = calculate_ema(
-        df,
+    df["ema50"] = ema(
+        close,
         50
     )
 
-    df["EMA200"] = calculate_ema(
-        df,
+    df["ema200"] = ema(
+        close,
         200
     )
 
-    df["RSI"] = calculate_rsi(
-        df
+    df["rsi"] = rsi(
+        close,
+        14
+    )
+
+    df["atr"] = atr(
+        df,
+        14
     )
 
     (
-        df["MACD"],
-        df["MACD_SIGNAL"],
-        df["MACD_HIST"]
-    ) = calculate_macd(
-        df
-    )
-
-    df["ATR"] = calculate_atr(
-        df
-    )
-
-    df["ADX"] = calculate_adx(
-        df
-    )
-
-    df["VOLUME_AVG"] = (
-        df["volume"]
-        .rolling(20)
-        .mean()
+        df["macd"],
+        df["macd_signal"],
+        df["macd_hist"]
+    ) = macd(
+        close
     )
 
     # =====================================================
-    # Last closed candle
+    # Last candles
     # =====================================================
 
     last = df.iloc[-1]
-    previous = df.iloc[-2]
+    prev = df.iloc[-2]
+    prev5 = df.iloc[-6]
 
     price = float(
         last["close"]
     )
 
-    atr = float(
-        last["ATR"]
+    current_atr = float(
+        last["atr"]
     )
 
-    rsi = float(
-        last["RSI"]
+    current_rsi = float(
+        last["rsi"]
     )
 
-    adx = float(
-        last["ADX"]
-    )
-
-    if not np.isfinite(atr) or atr <= 0:
+    if not np.isfinite(
+        current_atr
+    ) or current_atr <= 0:
 
         return {
             "signal": "NO TRADE",
             "score": 0,
             "confidence": 0,
-            "reason": "ATR نامعتبر"
+            "reason": "ATR invalid"
         }
 
-    if not np.isfinite(rsi):
+    if not np.isfinite(
+        current_rsi
+    ):
 
         return {
             "signal": "NO TRADE",
             "score": 0,
             "confidence": 0,
-            "reason": "RSI نامعتبر"
+            "reason": "RSI invalid"
         }
 
-    if not np.isfinite(adx):
+    # =====================================================
+    # Trend
+    # =====================================================
 
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "reason": "ADX نامعتبر"
-        }
+    ema20 = float(
+        last["ema20"]
+    )
+
+    ema50 = float(
+        last["ema50"]
+    )
+
+    ema200 = float(
+        last["ema200"]
+    )
+
+    ema20_prev = float(
+        prev["ema20"]
+    )
+
+    ema50_prev = float(
+        prev["ema50"]
+    )
+
+    # =====================================================
+    # Momentum
+    # =====================================================
+
+    momentum = (
+        price -
+        float(prev5["close"])
+    ) / float(prev5["close"])
+
+    # =====================================================
+    # MACD
+    # =====================================================
+
+    macd_value = float(
+        last["macd"]
+    )
+
+    macd_signal = float(
+        last["macd_signal"]
+    )
+
+    macd_hist = float(
+        last["macd_hist"]
+    )
+
+    prev_hist = float(
+        prev["macd_hist"]
+    )
 
     # =====================================================
     # Scores
@@ -316,257 +274,189 @@ def analyze(df):
     short_reasons = []
 
     # =====================================================
-    # 1. EMA200
+    # LONG CONDITIONS
     # =====================================================
 
-    if price > last["EMA200"]:
+    if price > ema200:
 
         long_score += 2
 
         long_reasons.append(
-            "قیمت بالای EMA200"
+            "Price above EMA200"
         )
 
-    elif price < last["EMA200"]:
+    if ema20 > ema50:
 
-        short_score += 2
-
-        short_reasons.append(
-            "قیمت زیر EMA200"
-        )
-
-    # =====================================================
-    # 2. EMA structure
-    # =====================================================
-
-    if (
-        last["EMA20"] >
-        last["EMA50"] >
-        last["EMA200"]
-    ):
-
-        long_score += 3
+        long_score += 2
 
         long_reasons.append(
-            "ساختار EMA صعودی"
+            "EMA20 above EMA50"
         )
 
-    elif (
-        last["EMA20"] <
-        last["EMA50"] <
-        last["EMA200"]
-    ):
+    if ema50 > ema200:
 
-        short_score += 3
+        long_score += 2
 
-        short_reasons.append(
-            "ساختار EMA نزولی"
+        long_reasons.append(
+            "EMA50 above EMA200"
         )
 
-    # =====================================================
-    # 3. EMA50 slope
-    # =====================================================
-
-    ema50_slope = (
-        last["EMA50"] -
-        df["EMA50"].iloc[-6]
-    )
-
-    if ema50_slope > 0:
+    if ema20 > ema20_prev:
 
         long_score += 1
 
         long_reasons.append(
-            "شیب EMA50 صعودی"
+            "EMA20 rising"
         )
 
-    elif ema50_slope < 0:
+    if ema50 > ema50_prev:
 
-        short_score += 1
+        long_score += 1
 
-        short_reasons.append(
-            "شیب EMA50 نزولی"
+        long_reasons.append(
+            "EMA50 rising"
         )
 
-    # =====================================================
-    # 4. RSI
-    # =====================================================
-
-    if 52 <= rsi <= 68:
+    if 50 <= current_rsi <= 67:
 
         long_score += 2
 
         long_reasons.append(
-            "RSI صعودی"
+            "RSI bullish"
         )
-
-    elif 32 <= rsi <= 48:
-
-        short_score += 2
-
-        short_reasons.append(
-            "RSI نزولی"
-        )
-
-    # =====================================================
-    # 5. MACD
-    # =====================================================
-
-    macd = float(
-        last["MACD"]
-    )
-
-    macd_signal = float(
-        last["MACD_SIGNAL"]
-    )
-
-    histogram = float(
-        last["MACD_HIST"]
-    )
-
-    previous_hist = float(
-        previous["MACD_HIST"]
-    )
 
     if (
-        macd > macd_signal
+        macd_value >
+        macd_signal
         and
-        histogram > 0
-        and
-        histogram > previous_hist
+        macd_hist > 0
     ):
 
         long_score += 2
 
         long_reasons.append(
-            "MACD صعودی"
+            "MACD bullish"
         )
-
-    elif (
-        macd < macd_signal
-        and
-        histogram < 0
-        and
-        histogram < previous_hist
-    ):
-
-        short_score += 2
-
-        short_reasons.append(
-            "MACD نزولی"
-        )
-
-    # =====================================================
-    # 6. ADX trend filter
-    # =====================================================
-
-    if adx < 20:
-
-        return {
-            "signal": "NO TRADE",
-            "score": max(
-                long_score,
-                short_score
-            ),
-            "confidence": 0,
-            "rsi": round(rsi, 2),
-            "price": price,
-            "atr": atr,
-            "reason": "ADX پایین - بازار بدون روند"
-        }
-
-    if adx >= 25:
-
-        if long_score > short_score:
-
-            long_score += 1
-
-            long_reasons.append(
-                "ADX روند قوی"
-            )
-
-        elif short_score > long_score:
-
-            short_score += 1
-
-            short_reasons.append(
-                "ADX روند قوی"
-            )
-
-    # =====================================================
-    # 7. Volume
-    # =====================================================
-
-    volume_avg = float(
-        last["VOLUME_AVG"]
-    )
 
     if (
-        np.isfinite(volume_avg)
-        and
-        volume_avg > 0
-        and
-        last["volume"] >
-        volume_avg * 1.15
+        macd_hist >
+        prev_hist
     ):
 
-        if long_score > short_score:
+        long_score += 1
 
-            long_score += 1
-
-            long_reasons.append(
-                "حجم تأییدکننده"
-            )
-
-        elif short_score > long_score:
-
-            short_score += 1
-
-            short_reasons.append(
-                "حجم تأییدکننده"
-            )
-
-    # =====================================================
-    # 8. Price momentum
-    # =====================================================
-
-    momentum = (
-        price -
-        float(df["close"].iloc[-6])
-    )
+        long_reasons.append(
+            "MACD momentum rising"
+        )
 
     if momentum > 0:
 
         long_score += 1
 
         long_reasons.append(
-            "مومنتوم صعودی"
+            "Price momentum positive"
         )
 
-    elif momentum < 0:
+    # =====================================================
+    # SHORT CONDITIONS
+    # =====================================================
+
+    if price < ema200:
+
+        short_score += 2
+
+        short_reasons.append(
+            "Price below EMA200"
+        )
+
+    if ema20 < ema50:
+
+        short_score += 2
+
+        short_reasons.append(
+            "EMA20 below EMA50"
+        )
+
+    if ema50 < ema200:
+
+        short_score += 2
+
+        short_reasons.append(
+            "EMA50 below EMA200"
+        )
+
+    if ema20 < ema20_prev:
 
         short_score += 1
 
         short_reasons.append(
-            "مومنتوم نزولی"
+            "EMA20 falling"
+        )
+
+    if ema50 < ema50_prev:
+
+        short_score += 1
+
+        short_reasons.append(
+            "EMA50 falling"
+        )
+
+    if 33 <= current_rsi <= 50:
+
+        short_score += 2
+
+        short_reasons.append(
+            "RSI bearish"
+        )
+
+    if (
+        macd_value <
+        macd_signal
+        and
+        macd_hist < 0
+    ):
+
+        short_score += 2
+
+        short_reasons.append(
+            "MACD bearish"
+        )
+
+    if (
+        macd_hist <
+        prev_hist
+    ):
+
+        short_score += 1
+
+        short_reasons.append(
+            "MACD momentum falling"
+        )
+
+    if momentum < 0:
+
+        short_score += 1
+
+        short_reasons.append(
+            "Price momentum negative"
         )
 
     # =====================================================
     # Direction
     # =====================================================
 
-    best_score = max(
-        long_score,
-        short_score
-    )
-
     difference = abs(
         long_score -
         short_score
     )
 
+    best_score = max(
+        long_score,
+        short_score
+    )
+
     # =====================================================
-    # Strong confirmation
+    # Minimum quality
     # =====================================================
 
     if best_score < 8:
@@ -574,16 +464,16 @@ def analyze(df):
         return {
             "signal": "NO TRADE",
             "score": best_score,
-            "confidence": min(
-                100,
-                best_score * 10
-            ),
+            "confidence": best_score * 8,
             "long_score": long_score,
             "short_score": short_score,
-            "rsi": round(rsi, 2),
+            "rsi": round(
+                current_rsi,
+                2
+            ),
             "price": price,
-            "atr": atr,
-            "reason": "تأیید کافی نیست"
+            "atr": current_atr,
+            "reason": "Weak signal"
         }
 
     if difference < 3:
@@ -591,16 +481,16 @@ def analyze(df):
         return {
             "signal": "NO TRADE",
             "score": best_score,
-            "confidence": min(
-                100,
-                best_score * 10
-            ),
+            "confidence": best_score * 8,
             "long_score": long_score,
             "short_score": short_score,
-            "rsi": round(rsi, 2),
+            "rsi": round(
+                current_rsi,
+                2
+            ),
             "price": price,
-            "atr": atr,
-            "reason": "اختلاف جهت کافی نیست"
+            "atr": current_atr,
+            "reason": "Direction unclear"
         }
 
     # =====================================================
@@ -611,17 +501,17 @@ def analyze(df):
 
         stop_loss = (
             price -
-            atr * 2
+            current_atr * 2
         )
 
         tp1 = (
             price +
-            atr * 2
+            current_atr * 2
         )
 
-        take_profit = (
+        tp2 = (
             price +
-            atr * 4
+            current_atr * 4
         )
 
         return {
@@ -629,16 +519,19 @@ def analyze(df):
             "score": long_score,
             "confidence": min(
                 100,
-                long_score * 10
+                long_score * 8
             ),
             "long_score": long_score,
             "short_score": short_score,
-            "rsi": round(rsi, 2),
+            "rsi": round(
+                current_rsi,
+                2
+            ),
             "price": price,
-            "atr": atr,
+            "atr": current_atr,
             "stop_loss": stop_loss,
             "tp1": tp1,
-            "take_profit": take_profit,
+            "take_profit": tp2,
             "reason": " | ".join(
                 long_reasons
             )
@@ -652,17 +545,17 @@ def analyze(df):
 
         stop_loss = (
             price +
-            atr * 2
+            current_atr * 2
         )
 
         tp1 = (
             price -
-            atr * 2
+            current_atr * 2
         )
 
-        take_profit = (
+        tp2 = (
             price -
-            atr * 4
+            current_atr * 4
         )
 
         return {
@@ -670,16 +563,19 @@ def analyze(df):
             "score": short_score,
             "confidence": min(
                 100,
-                short_score * 10
+                short_score * 8
             ),
             "long_score": long_score,
             "short_score": short_score,
-            "rsi": round(rsi, 2),
+            "rsi": round(
+                current_rsi,
+                2
+            ),
             "price": price,
-            "atr": atr,
+            "atr": current_atr,
             "stop_loss": stop_loss,
             "tp1": tp1,
-            "take_profit": take_profit,
+            "take_profit": tp2,
             "reason": " | ".join(
                 short_reasons
             )
@@ -695,10 +591,9 @@ def analyze(df):
         "confidence": 0,
         "long_score": long_score,
         "short_score": short_score,
-        "rsi": round(rsi, 2),
         "price": price,
-        "atr": atr,
-        "reason": "بازار نامشخص"
+        "atr": current_atr,
+        "reason": "No clear direction"
     }
 
 
@@ -709,5 +604,5 @@ def analyze(df):
 if __name__ == "__main__":
 
     print(
-        "Advanced Analysis Engine v3 OK"
+        "Analysis Engine v4 OK"
     )
