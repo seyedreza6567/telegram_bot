@@ -34,13 +34,15 @@ def calculate_rsi(series, period=14):
         adjust=False
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rs = avg_gain / avg_loss.replace(
+        0,
+        np.nan
+    )
 
     rsi = 100 - (
         100 / (1 + rs)
     )
 
-    # اگر loss صفر باشد، RSI باید 100 باشد
     rsi = rsi.where(
         avg_loss != 0,
         100
@@ -109,7 +111,7 @@ def calculate_atr(df, period=14):
 
 
 # =========================================================
-# SAFE VALUE
+# SAFE FLOAT
 # =========================================================
 
 def _safe_float(value):
@@ -128,20 +130,61 @@ def _safe_float(value):
 
 
 # =========================================================
+# EMPTY RESULT
+# =========================================================
+
+def _no_trade(
+    reason,
+    price=None,
+    atr=None,
+    rsi=None,
+    trend="NEUTRAL",
+    trend_strength=0,
+    long_score=0,
+    short_score=0
+):
+
+    return {
+        "signal": "NO TRADE",
+        "score": max(
+            long_score,
+            short_score
+        ),
+        "confidence": 0,
+
+        "long_score": long_score,
+        "short_score": short_score,
+
+        "price": price,
+        "atr": atr,
+        "rsi": rsi,
+
+        "trend": trend,
+        "trend_strength": trend_strength,
+
+        "score_ratio": round(
+            max(
+                long_score,
+                short_score
+            ) / 15.0,
+            4
+        ),
+
+        "reason": reason
+    }
+
+
+# =========================================================
 # ANALYSIS
 # =========================================================
 
 def analyze(df):
 
     if df is None:
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "long_score": 0,
-            "short_score": 0,
-            "reason": "داده موجود نیست"
-        }
+
+        return _no_trade(
+            "داده موجود نیست"
+        )
 
     required_columns = {
         "open",
@@ -151,33 +194,25 @@ def analyze(df):
         "volume"
     }
 
-    if not required_columns.issubset(df.columns):
+    if not required_columns.issubset(
+        df.columns
+    ):
 
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "long_score": 0,
-            "short_score": 0,
-            "reason": "ستون‌های داده ناقص است"
-        }
+        return _no_trade(
+            "ستون‌های داده ناقص است"
+        )
 
     if len(df) < 250:
 
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "long_score": 0,
-            "short_score": 0,
-            "reason": "داده کافی نیست"
-        }
+        return _no_trade(
+            "داده کافی نیست"
+        )
 
     df = df.copy()
 
-    # -----------------------------------------------------
-    # Indicators
-    # -----------------------------------------------------
+    # =====================================================
+    # INDICATORS
+    # =====================================================
 
     close = df["close"]
 
@@ -218,9 +253,9 @@ def analyze(df):
         .mean()
     )
 
-    # -----------------------------------------------------
-    # Use CLOSED candle only
-    # -----------------------------------------------------
+    # =====================================================
+    # CLOSED / LAST AVAILABLE CANDLE
+    # =====================================================
 
     last = df.iloc[-1]
     previous = df.iloc[-2]
@@ -308,31 +343,21 @@ def analyze(df):
         for value in values
     ):
 
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "long_score": 0,
-            "short_score": 0,
-            "price": price,
-            "atr": atr,
-            "rsi": rsi,
-            "reason": "اندیکاتور نامعتبر"
-        }
+        return _no_trade(
+            "اندیکاتور نامعتبر",
+            price=price,
+            atr=atr,
+            rsi=rsi
+        )
 
     if atr <= 0:
 
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "long_score": 0,
-            "short_score": 0,
-            "price": price,
-            "atr": atr,
-            "rsi": rsi,
-            "reason": "ATR نامعتبر"
-        }
+        return _no_trade(
+            "ATR نامعتبر",
+            price=price,
+            atr=atr,
+            rsi=rsi
+        )
 
     # =====================================================
     # TREND
@@ -358,22 +383,16 @@ def analyze(df):
         ema20 < ema50
     )
 
-    # بازار بدون روند واضح
     if trend_strength < 0.30:
 
-        return {
-            "signal": "NO TRADE",
-            "score": 0,
-            "confidence": 0,
-            "long_score": 0,
-            "short_score": 0,
-            "price": price,
-            "atr": atr,
-            "rsi": rsi,
-            "trend": "WEAK",
-            "trend_strength": trend_strength,
-            "reason": "قدرت روند کافی نیست"
-        }
+        return _no_trade(
+            "قدرت روند کافی نیست",
+            price=price,
+            atr=atr,
+            rsi=rsi,
+            trend="WEAK",
+            trend_strength=trend_strength
+        )
 
     # =====================================================
     # MOMENTUM
@@ -384,7 +403,8 @@ def analyze(df):
     ) / previous5_close
 
     # =====================================================
-    # SCORE
+    # SCORES
+    # Maximum theoretical score = 15
     # =====================================================
 
     long_score = 0
@@ -625,19 +645,15 @@ def analyze(df):
     # VOLUME
     # =====================================================
 
-    volume_confirmation = False
-
-    if (
+    volume_confirmation = (
         volume is not None
         and
         volume_avg is not None
         and
         volume_avg > 0
-    ):
-
-        volume_confirmation = (
-            volume > volume_avg * 1.05
-        )
+        and
+        volume > volume_avg * 1.05
+    )
 
     if volume_confirmation:
 
@@ -676,7 +692,7 @@ def analyze(df):
         )
 
     # =====================================================
-    # FINAL DECISION
+    # FINAL
     # =====================================================
 
     best_score = max(
@@ -685,10 +701,18 @@ def analyze(df):
     )
 
     difference = abs(
-        long_score - short_score
+        long_score -
+        short_score
     )
 
+    score_ratio = (
+        best_score / 15.0
+    )
+
+    # =====================================================
     # LONG
+    # =====================================================
+
     if (
         long_trend
         and
@@ -728,6 +752,10 @@ def analyze(df):
             "atr": atr,
             "trend": "BULLISH",
             "trend_strength": trend_strength,
+            "score_ratio": round(
+                long_score / 15.0,
+                4
+            ),
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
@@ -736,7 +764,10 @@ def analyze(df):
             )
         }
 
+    # =====================================================
     # SHORT
+    # =====================================================
+
     if (
         short_trend
         and
@@ -776,6 +807,10 @@ def analyze(df):
             "atr": atr,
             "trend": "BEARISH",
             "trend_strength": trend_strength,
+            "score_ratio": round(
+                short_score / 15.0,
+                4
+            ),
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
@@ -803,6 +838,10 @@ def analyze(df):
             "NEUTRAL"
         ),
         "trend_strength": trend_strength,
+        "score_ratio": round(
+            score_ratio,
+            4
+        ),
         "reason": "شرایط ورود کامل نیست"
     }
 
