@@ -5,6 +5,10 @@ from scanner import get_klines
 from analysis_engine import analyze
 
 
+# =========================================================
+# SYMBOLS
+# =========================================================
+
 SYMBOLS = [
     "BTC-SWAP-USDT",
     "ETH-SWAP-USDT",
@@ -23,19 +27,32 @@ SYMBOLS = [
     "SUI-SWAP-USDT",
 ]
 
+
+# =========================================================
+# SETTINGS
+# =========================================================
+
 TIMEFRAME = "1h"
 
 CANDLE_LIMIT = 1000
+
 MIN_ANALYSIS_CANDLES = 250
 
 SL_ATR = 2.0
+
 TP1_ATR = 2.0
+
 TP2_ATR = 4.0
 
 MAX_HOLD_CANDLES = 100
 
+# هزینه رفت و برگشت معامله
 COST_R = 0.05
 
+
+# =========================================================
+# SAFE FLOAT
+# =========================================================
 
 def safe_float(value):
 
@@ -44,13 +61,19 @@ def safe_float(value):
         value = float(value)
 
         if np.isfinite(value):
+
             return value
 
     except Exception:
+
         pass
 
     return None
 
+
+# =========================================================
+# SYMBOL NAME
+# =========================================================
 
 def symbol_name(symbol):
 
@@ -59,6 +82,10 @@ def symbol_name(symbol):
         ""
     )
 
+
+# =========================================================
+# SIMULATE TRADE
+# =========================================================
 
 def simulate_trade(
     df,
@@ -71,14 +98,17 @@ def simulate_trade(
         df.iloc[entry_index]["open"]
     )
 
-    if (
-        entry is None
-        or
-        atr is None
-        or
-        atr <= 0
-    ):
+    if entry is None:
+
         return None
+
+    if atr is None or atr <= 0:
+
+        return None
+
+    # =====================================================
+    # LONG
+    # =====================================================
 
     if signal == "LONG":
 
@@ -93,6 +123,10 @@ def simulate_trade(
         tp2 = entry + (
             atr * TP2_ATR
         )
+
+    # =====================================================
+    # SHORT
+    # =====================================================
 
     elif signal == "SHORT":
 
@@ -112,12 +146,24 @@ def simulate_trade(
 
         return None
 
+    # =====================================================
+    # نصف پوزیشن در TP1
+    # =====================================================
+
     tp1_hit = False
+
+    # =====================================================
+    # حداکثر زمان معامله
+    # =====================================================
 
     last_index = min(
         len(df),
         entry_index + MAX_HOLD_CANDLES + 1
     )
+
+    # =====================================================
+    # بررسی کندل‌ها
+    # =====================================================
 
     for j in range(
         entry_index,
@@ -133,6 +179,7 @@ def simulate_trade(
         )
 
         if high is None or low is None:
+
             continue
 
         # =================================================
@@ -141,13 +188,19 @@ def simulate_trade(
 
         if signal == "LONG":
 
+            # -------------------------------------------------
+            # قبل از TP1
+            # -------------------------------------------------
+
             if not tp1_hit:
 
                 hit_sl = low <= sl
+
                 hit_tp1 = high >= tp1
 
-                # هر دو در یک کندل
-                # حالت محافظه‌کارانه = SL
+                # اگر SL و TP1 در یک کندل باشند
+                # حالت محافظه‌کارانه:
+                # SL را اول حساب می‌کنیم.
 
                 if hit_sl and hit_tp1:
 
@@ -169,34 +222,35 @@ def simulate_trade(
 
                     tp1_hit = True
 
-                    # اگر همان کندل TP2 هم لمس شد،
-                    # ترتیب دقیق OHLC مشخص نیست.
-                    # محافظه‌کارانه فقط TP1 را حساب می‌کنیم.
+                    # اگر در همان کندل TP2 هم رسیده باشد
+                    # نصف پوزیشن TP1
+                    # نصف دیگر TP2
 
                     if high >= tp2:
 
                         return {
-                            "result": "TP1",
-                            "r": 0.5 - COST_R,
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
                             "bars": j - entry_index + 1
                         }
 
                     continue
 
+            # -------------------------------------------------
+            # بعد از TP1
+            # -------------------------------------------------
+
             else:
 
-                # نصف باقی‌مانده:
-                # TP2 = +1R روی نصف حجم
-                if high >= tp2:
+                hit_sl_be = low <= entry
 
-                    return {
-                        "result": "TP2",
-                        "r": 1.5 - COST_R,
-                        "bars": j - entry_index + 1
-                    }
+                hit_tp2 = high >= tp2
 
-                # نصف باقی‌مانده روی Entry بسته می‌شود
-                if low <= entry:
+                # اگر بعد از TP1 هم Entry و TP2
+                # در یک کندل باشند،
+                # محافظه‌کارانه Entry را اول می‌گیریم.
+
+                if hit_sl_be and hit_tp2:
 
                     return {
                         "result": "TP1",
@@ -204,15 +258,36 @@ def simulate_trade(
                         "bars": j - entry_index + 1
                     }
 
+                if hit_sl_be:
+
+                    return {
+                        "result": "TP1",
+                        "r": 0.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+                if hit_tp2:
+
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
         # =================================================
         # SHORT
         # =================================================
 
-        else:
+        elif signal == "SHORT":
+
+            # -------------------------------------------------
+            # قبل از TP1
+            # -------------------------------------------------
 
             if not tp1_hit:
 
                 hit_sl = high >= sl
+
                 hit_tp1 = low <= tp1
 
                 if hit_sl and hit_tp1:
@@ -238,24 +313,24 @@ def simulate_trade(
                     if low <= tp2:
 
                         return {
-                            "result": "TP1",
-                            "r": 0.5 - COST_R,
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
                             "bars": j - entry_index + 1
                         }
 
                     continue
 
+            # -------------------------------------------------
+            # بعد از TP1
+            # -------------------------------------------------
+
             else:
 
-                if low <= tp2:
+                hit_sl_be = high >= entry
 
-                    return {
-                        "result": "TP2",
-                        "r": 1.5 - COST_R,
-                        "bars": j - entry_index + 1
-                    }
+                hit_tp2 = low <= tp2
 
-                if high >= entry:
+                if hit_sl_be and hit_tp2:
 
                     return {
                         "result": "TP1",
@@ -263,32 +338,49 @@ def simulate_trade(
                         "bars": j - entry_index + 1
                     }
 
-    # =====================================================
-    # پایان زمان معامله
-    # =====================================================
+                if hit_sl_be:
 
-    if tp1_hit:
+                    return {
+                        "result": "TP1",
+                        "r": 0.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
 
-        return {
-            "result": "TP1",
-            "r": 0.5 - COST_R,
-            "bars": last_index - entry_index
-        }
+                if hit_tp2:
+
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+    # =====================================================
+    # TIMEOUT
+    # =====================================================
 
     return {
         "result": "TIMEOUT",
         "r": 0.0,
-        "bars": last_index - entry_index
+        "bars": max(
+            1,
+            last_index - entry_index
+        )
     }
 
+
+# =========================================================
+# BACKTEST SYMBOL
+# =========================================================
 
 def backtest_symbol(symbol):
 
     print("\n" + "=" * 65)
+
     print(
         "BACKTEST:",
         symbol_name(symbol)
     )
+
     print("=" * 65)
 
     df = get_klines(
@@ -300,6 +392,7 @@ def backtest_symbol(symbol):
     if df is None:
 
         print("DATA ERROR")
+
         return None
 
     if len(df) < MIN_ANALYSIS_CANDLES + 25:
@@ -311,11 +404,25 @@ def backtest_symbol(symbol):
 
         return None
 
+    df = df.copy()
+
+    df = df.reset_index(
+        drop=True
+    )
+
     trades = []
 
     i = MIN_ANALYSIS_CANDLES
 
-    while i < len(df) - 20:
+    # =====================================================
+    # BACKTEST LOOP
+    # =====================================================
+
+    while i < len(df) - 1:
+
+        # =================================================
+        # فقط اطلاعات قبل از ورود
+        # =================================================
 
         historical = df.iloc[:i].copy()
 
@@ -333,6 +440,7 @@ def backtest_symbol(symbol):
             )
 
             i += 1
+
             continue
 
         signal = analysis.get(
@@ -346,6 +454,7 @@ def backtest_symbol(symbol):
         ]:
 
             i += 1
+
             continue
 
         atr = safe_float(
@@ -355,7 +464,12 @@ def backtest_symbol(symbol):
         if atr is None or atr <= 0:
 
             i += 1
+
             continue
+
+        # =================================================
+        # ورود روی OPEN کندل بعدی
+        # =================================================
 
         trade = simulate_trade(
             df=df,
@@ -367,28 +481,52 @@ def backtest_symbol(symbol):
         if trade is None:
 
             i += 1
+
             continue
 
         trades.append({
+
             "signal": signal,
+
             "result": trade["result"],
+
             "r": trade["r"],
-            "bars": trade["bars"]
+
+            "bars": trade["bars"],
+
+            "entry_index": i
+
         })
 
-        i += max(
+        # =================================================
+        # نکته مهم:
+        #
+        # اگر معامله در کندل j تمام شده،
+        # معامله بعدی باید از کندل بعدی شروع شود.
+        # =================================================
+
+        i = i + max(
             1,
             trade["bars"]
         )
 
+    # =====================================================
+    # NO TRADES
+    # =====================================================
+
     if not trades:
 
         print("NO TRADES")
+
         return None
 
     data = pd.DataFrame(
         trades
     )
+
+    # =====================================================
+    # RESULTS
+    # =====================================================
 
     tp2 = len(
         data[
@@ -427,28 +565,33 @@ def backtest_symbol(symbol):
     )
 
     completed = (
-        tp1 +
-        tp2 +
-        sl
+        tp1
+        + tp2
+        + sl
     )
 
     wins = (
-        tp1 +
-        tp2
+        tp1
+        + tp2
     )
 
     if completed > 0:
 
         win_rate = (
-            wins /
-            completed
+            wins / completed
         ) * 100
 
     else:
 
         win_rate = 0
 
-    total_r = data["r"].sum()
+    total_r = float(
+        data["r"].sum()
+    )
+
+    # =====================================================
+    # PRINT
+    # =====================================================
 
     print(
         "Trades:",
@@ -504,23 +647,41 @@ def backtest_symbol(symbol):
     )
 
     return {
+
         "symbol": symbol,
+
         "trades": len(data),
+
         "long": long_count,
+
         "short": short_count,
+
         "tp2": tp2,
+
         "tp1": tp1,
+
         "sl": sl,
+
         "timeout": timeout,
+
         "win_rate": win_rate,
+
         "profit": total_r
     }
 
 
+# =========================================================
+# MAIN
+# =========================================================
+
 def main():
 
     print("\n" + "=" * 65)
-    print("🚀 FINAL REAL SL/TP BACKTEST")
+
+    print(
+        "🚀 FINAL SL/TP BACKTEST"
+    )
+
     print("=" * 65)
 
     results = []
@@ -547,6 +708,10 @@ def main():
                 e
             )
 
+    # =====================================================
+    # NO RESULTS
+    # =====================================================
+
     if not results:
 
         print(
@@ -555,15 +720,19 @@ def main():
 
         return
 
+    # =====================================================
+    # SORT
+    # =====================================================
+
     results = sorted(
         results,
         key=lambda x: x["profit"],
         reverse=True
     )
 
-    print("\n" + "=" * 65)
-    print("🏆 FINAL RESULT")
-    print("=" * 65)
+    # =====================================================
+    # TOTALS
+    # =====================================================
 
     total_trades = sum(
         x["trades"]
@@ -596,26 +765,37 @@ def main():
     )
 
     completed = (
-        total_tp2 +
-        total_tp1 +
-        total_sl
+        total_tp2
+        + total_tp1
+        + total_sl
     )
 
     wins = (
-        total_tp2 +
-        total_tp1
+        total_tp2
+        + total_tp1
     )
 
     if completed > 0:
 
         win_rate = (
-            wins /
-            completed
+            wins / completed
         ) * 100
 
     else:
 
         win_rate = 0
+
+    # =====================================================
+    # FINAL
+    # =====================================================
+
+    print("\n" + "=" * 65)
+
+    print(
+        "🏆 FINAL RESULT"
+    )
+
+    print("=" * 65)
 
     print(
         "TOTAL TRADES:",
@@ -647,7 +827,8 @@ def main():
         round(
             win_rate,
             2
-        )
+        ),
+        "%"
     )
 
     print(
@@ -655,7 +836,8 @@ def main():
         round(
             total_profit,
             2
-        )
+        ),
+        "R"
     )
 
     print("\nRANKING")
@@ -677,6 +859,7 @@ def main():
                 result["win_rate"],
                 2
             ),
+            "%",
             "| Profit:",
             round(
                 result["profit"],
@@ -686,9 +869,17 @@ def main():
         )
 
     print("\n" + "=" * 65)
-    print("✅ BACKTEST FINISHED")
+
+    print(
+        "✅ BACKTEST FINISHED"
+    )
+
     print("=" * 65)
 
+
+# =========================================================
+# RUN
+# =========================================================
 
 if __name__ == "__main__":
 
