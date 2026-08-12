@@ -40,7 +40,6 @@ MIN_ANALYSIS_CANDLES = 250
 
 MAX_HOLD_CANDLES = 100
 
-# هزینه رفت و برگشت معامله بر حسب R
 COST_R = 0.05
 
 
@@ -79,17 +78,13 @@ def symbol_name(symbol):
 # =========================================================
 # MODEL A
 #
-# SL = 2 ATR
-# TP1 = 2 ATR
-# TP2 = 4 ATR
-#
-# بعد TP1:
-# نصف پوزیشن بسته می‌شود
-# نصف باقی‌مانده BE
-#
 # SL  = -1R
 # TP1 = +0.5R
 # TP2 = +1.5R
+#
+# بعد TP1:
+# نصف پوزیشن بسته
+# نصف باقی مانده BE
 # =========================================================
 
 def simulate_model_a(
@@ -103,23 +98,20 @@ def simulate_model_a(
         df.iloc[entry_index]["open"]
     )
 
-    if entry is None:
-        return None
-
-    if atr is None or atr <= 0:
+    if entry is None or atr is None or atr <= 0:
         return None
 
     if signal == "LONG":
 
-        sl = entry - atr * 2.0
-        tp1 = entry + atr * 2.0
-        tp2 = entry + atr * 4.0
+        sl = entry - atr * 2
+        tp1 = entry + atr * 2
+        tp2 = entry + atr * 4
 
     elif signal == "SHORT":
 
-        sl = entry + atr * 2.0
-        tp1 = entry - atr * 2.0
-        tp2 = entry - atr * 4.0
+        sl = entry + atr * 2
+        tp1 = entry - atr * 2
+        tp2 = entry - atr * 4
 
     else:
 
@@ -148,19 +140,12 @@ def simulate_model_a(
         if high is None or low is None:
             continue
 
-        # =================================================
-        # LONG
-        # =================================================
-
         if signal == "LONG":
 
             if not tp1_hit:
 
                 hit_sl = low <= sl
                 hit_tp1 = high >= tp1
-
-                # اگر SL و TP1 در یک کندل باشند
-                # SL اول در نظر گرفته می‌شود.
 
                 if hit_sl:
 
@@ -174,7 +159,6 @@ def simulate_model_a(
 
                     tp1_hit = True
 
-                    # اگر TP2 هم در همان کندل لمس شود
                     if high >= tp2:
 
                         return {
@@ -183,15 +167,10 @@ def simulate_model_a(
                             "bars": j - entry_index + 1
                         }
 
-                    continue
-
             else:
 
                 hit_be = low <= entry
                 hit_tp2 = high >= tp2
-
-                # اگر BE و TP2 در یک کندل باشند
-                # BE اول در نظر گرفته می‌شود.
 
                 if hit_be:
 
@@ -208,10 +187,6 @@ def simulate_model_a(
                         "r": 1.5 - COST_R,
                         "bars": j - entry_index + 1
                     }
-
-        # =================================================
-        # SHORT
-        # =================================================
 
         elif signal == "SHORT":
 
@@ -239,8 +214,6 @@ def simulate_model_a(
                             "r": 1.5 - COST_R,
                             "bars": j - entry_index + 1
                         }
-
-                    continue
 
             else:
 
@@ -276,17 +249,17 @@ def simulate_model_a(
 # =========================================================
 # MODEL B
 #
-# SL = 2 ATR
-# TP1 = 2 ATR
-# TP2 = 4 ATR
+# SL  = -1R
+# TP1 = +0.5R
+# TP2 = +1.5R
 #
 # بعد TP1:
 # نصف پوزیشن بسته می‌شود
-# نصف باقی‌مانده SL اولیه را حفظ می‌کند
+# نصف باقی‌مانده SL اولیه دارد
 #
-# TP1 = +0.5R
-# سپس SL = -0.5R مجموع
-# TP2 = +1.5R
+# اگر SL بخورد:
+# +0.5R - 0.5R = 0R
+#
 # =========================================================
 
 def simulate_model_b(
@@ -300,23 +273,20 @@ def simulate_model_b(
         df.iloc[entry_index]["open"]
     )
 
-    if entry is None:
-        return None
-
-    if atr is None or atr <= 0:
+    if entry is None or atr is None or atr <= 0:
         return None
 
     if signal == "LONG":
 
-        sl = entry - atr * 2.0
-        tp1 = entry + atr * 2.0
-        tp2 = entry + atr * 4.0
+        sl = entry - atr * 2
+        tp1 = entry + atr * 2
+        tp2 = entry + atr * 4
 
     elif signal == "SHORT":
 
-        sl = entry + atr * 2.0
-        tp1 = entry - atr * 2.0
-        tp2 = entry - atr * 4.0
+        sl = entry + atr * 2
+        tp1 = entry - atr * 2
+        tp2 = entry - atr * 4
 
     else:
 
@@ -345,10 +315,6 @@ def simulate_model_b(
         if high is None or low is None:
             continue
 
-        # =================================================
-        # LONG
-        # =================================================
-
         if signal == "LONG":
 
             if not tp1_hit:
@@ -376,8 +342,6 @@ def simulate_model_b(
                             "bars": j - entry_index + 1
                         }
 
-                    continue
-
             else:
 
                 hit_sl = low <= sl
@@ -387,7 +351,7 @@ def simulate_model_b(
 
                     return {
                         "result": "TP1",
-                        "r": -0.5 - COST_R,
+                        "r": 0.0 - COST_R,
                         "bars": j - entry_index + 1
                     }
 
@@ -398,10 +362,6 @@ def simulate_model_b(
                         "r": 1.5 - COST_R,
                         "bars": j - entry_index + 1
                     }
-
-        # =================================================
-        # SHORT
-        # =================================================
 
         elif signal == "SHORT":
 
@@ -430,8 +390,6 @@ def simulate_model_b(
                             "bars": j - entry_index + 1
                         }
 
-                    continue
-
             else:
 
                 hit_sl = high >= sl
@@ -441,7 +399,7 @@ def simulate_model_b(
 
                     return {
                         "result": "TP1",
-                        "r": -0.5 - COST_R,
+                        "r": 0.0 - COST_R,
                         "bars": j - entry_index + 1
                     }
 
@@ -466,11 +424,6 @@ def simulate_model_b(
 # =========================================================
 # MODEL C
 #
-# SL = 2 ATR
-# TP = 4 ATR
-#
-# بدون TP1
-#
 # SL = -1R
 # TP = +2R
 # =========================================================
@@ -486,21 +439,18 @@ def simulate_model_c(
         df.iloc[entry_index]["open"]
     )
 
-    if entry is None:
-        return None
-
-    if atr is None or atr <= 0:
+    if entry is None or atr is None or atr <= 0:
         return None
 
     if signal == "LONG":
 
-        sl = entry - atr * 2.0
-        tp = entry + atr * 4.0
+        sl = entry - atr * 2
+        tp = entry + atr * 4
 
     elif signal == "SHORT":
 
-        sl = entry + atr * 2.0
-        tp = entry - atr * 4.0
+        sl = entry + atr * 2
+        tp = entry - atr * 4
 
     else:
 
@@ -527,55 +477,31 @@ def simulate_model_c(
         if high is None or low is None:
             continue
 
-        # =================================================
-        # LONG
-        # =================================================
-
         if signal == "LONG":
 
             hit_sl = low <= sl
             hit_tp = high >= tp
 
-            if hit_sl:
-
-                return {
-                    "result": "SL",
-                    "r": -1.0 - COST_R,
-                    "bars": j - entry_index + 1
-                }
-
-            if hit_tp:
-
-                return {
-                    "result": "TP",
-                    "r": 2.0 - COST_R,
-                    "bars": j - entry_index + 1
-                }
-
-        # =================================================
-        # SHORT
-        # =================================================
-
-        elif signal == "SHORT":
+        else:
 
             hit_sl = high >= sl
             hit_tp = low <= tp
 
-            if hit_sl:
+        if hit_sl:
 
-                return {
-                    "result": "SL",
-                    "r": -1.0 - COST_R,
-                    "bars": j - entry_index + 1
-                }
+            return {
+                "result": "SL",
+                "r": -1.0 - COST_R,
+                "bars": j - entry_index + 1
+            }
 
-            if hit_tp:
+        if hit_tp:
 
-                return {
-                    "result": "TP",
-                    "r": 2.0 - COST_R,
-                    "bars": j - entry_index + 1
-                }
+            return {
+                "result": "TP",
+                "r": 2.0 - COST_R,
+                "bars": j - entry_index + 1
+            }
 
     return {
         "result": "TIMEOUT",
@@ -588,31 +514,20 @@ def simulate_model_c(
 
 
 # =========================================================
-# CALCULATE STATS
+# STATS
 # =========================================================
 
 def calculate_stats(trades):
 
-    if not trades:
-
-        return {
-            "trades": 0,
-            "tp2": 0,
-            "tp1": 0,
-            "tp": 0,
-            "sl": 0,
-            "timeout": 0,
-            "win_rate": 0.0,
-            "profit": 0.0
-        }
-
-    total_profit = 0.0
-
-    tp2 = 0
-    tp1 = 0
-    tp = 0
-    sl = 0
-    timeout = 0
+    stats = {
+        "trades": len(trades),
+        "tp2": 0,
+        "tp1": 0,
+        "tp": 0,
+        "sl": 0,
+        "timeout": 0,
+        "profit": 0.0
+    }
 
     for trade in trades:
 
@@ -622,84 +537,71 @@ def calculate_stats(trades):
         )
 
         r = safe_float(
-            trade.get(
-                "r",
-                0.0
-            )
+            trade.get("r", 0)
         )
 
         if r is None:
             r = 0.0
 
-        total_profit += r
+        stats["profit"] += r
 
         if result == "TP2":
-
-            tp2 += 1
+            stats["tp2"] += 1
 
         elif result == "TP1":
-
-            tp1 += 1
+            stats["tp1"] += 1
 
         elif result == "TP":
-
-            tp += 1
+            stats["tp"] += 1
 
         elif result == "SL":
+            stats["sl"] += 1
 
-            sl += 1
-
-        elif result == "TIMEOUT":
-
-            timeout += 1
-
-    total_trades = len(trades)
+        else:
+            stats["timeout"] += 1
 
     wins = (
-        tp2 +
-        tp1 +
-        tp
+        stats["tp2"]
+        +
+        stats["tp1"]
+        +
+        stats["tp"]
     )
 
     completed = (
         wins +
-        sl
+        stats["sl"]
     )
 
-    win_rate = (
+    stats["win_rate"] = (
         wins / completed * 100
         if completed > 0
         else 0.0
     )
 
-    return {
-        "trades": total_trades,
-        "tp2": tp2,
-        "tp1": tp1,
-        "tp": tp,
-        "sl": sl,
-        "timeout": timeout,
-        "win_rate": win_rate,
-        "profit": total_profit
-    }
+    return stats
 
 
 # =========================================================
 # GENERATE COMMON ENTRIES
 #
-# مهم:
-# این تابع فقط Entry ها را پیدا می‌کند.
+# فقط وقتی وارد می‌شویم که سیگنال
+# از حالت دیگر به LONG یا SHORT تغییر کند.
 #
-# هیچ مدل خروجی در این مرحله دخالت ندارد.
+# بنابراین یک LONG که 20 کندل پشت‌سرهم
+# باقی مانده، 20 معامله تولید نمی‌کند.
 # =========================================================
 
 def generate_entries(df):
 
     entries = []
 
-    i = MIN_ANALYSIS_CANDLES
+    previous_signal = "NO TRADE"
 
-    while i < len(df) - 1:
+    for i in range(
+        MIN_ANALYSIS_CANDLES,
+        len(df) - 1
+    ):
 
         historical = df.iloc[:i].copy()
 
@@ -712,13 +614,11 @@ def generate_entries(df):
         except Exception as e:
 
             print(
-                "ANALYSIS ERROR AT:",
+                "ANALYSIS ERROR:",
                 i,
-                "|",
                 e
             )
 
-            i += 1
             continue
 
         if not isinstance(
@@ -726,7 +626,6 @@ def generate_entries(df):
             dict
         ):
 
-            i += 1
             continue
 
         signal = analysis.get(
@@ -734,31 +633,37 @@ def generate_entries(df):
             "NO TRADE"
         )
 
-        if signal not in [
-            "LONG",
-            "SHORT"
-        ]:
+        # -----------------------------------------------
+        # فقط تغییر وضعیت به LONG / SHORT
+        # -----------------------------------------------
 
-            i += 1
-            continue
-
-        atr = safe_float(
-            analysis.get("atr")
+        new_long = (
+            signal == "LONG"
+            and
+            previous_signal != "LONG"
         )
 
-        if atr is None or atr <= 0:
+        new_short = (
+            signal == "SHORT"
+            and
+            previous_signal != "SHORT"
+        )
 
-            i += 1
-            continue
+        if new_long or new_short:
 
-        entries.append({
-            "index": i,
-            "signal": signal,
-            "atr": atr
-        })
+            atr = safe_float(
+                analysis.get("atr")
+            )
 
-        # هر کندل فقط یک بار بررسی می‌شود.
-        i += 1
+            if atr is not None and atr > 0:
+
+                entries.append({
+                    "index": i,
+                    "signal": signal,
+                    "atr": atr
+                })
+
+        previous_signal = signal
 
     return entries
 
@@ -807,15 +712,9 @@ def backtest_symbol(symbol):
 
         return None
 
-    df = df.copy()
-
-    df = df.reset_index(
+    df = df.copy().reset_index(
         drop=True
     )
-
-    # =====================================================
-    # COMMON ENTRIES
-    # =====================================================
 
     entries = generate_entries(
         df
@@ -825,14 +724,6 @@ def backtest_symbol(symbol):
         "COMMON ENTRIES:",
         len(entries)
     )
-
-    if not entries:
-
-        return {
-            "A": calculate_stats([]),
-            "B": calculate_stats([]),
-            "C": calculate_stats([])
-        }
 
     model_trades = {
         "A": [],
@@ -846,74 +737,47 @@ def backtest_symbol(symbol):
 
     for entry in entries:
 
-        entry_index = entry["index"]
+        index = entry["index"]
         signal = entry["signal"]
         atr = entry["atr"]
 
-        # =================================================
-        # MODEL A
-        # =================================================
-
         trade_a = simulate_model_a(
             df,
-            entry_index,
+            index,
+            signal,
+            atr
+        )
+
+        trade_b = simulate_model_b(
+            df,
+            index,
+            signal,
+            atr
+        )
+
+        trade_c = simulate_model_c(
+            df,
+            index,
             signal,
             atr
         )
 
         if trade_a is not None:
-
-            model_trades["A"].append(
-                trade_a
-            )
-
-        # =================================================
-        # MODEL B
-        # =================================================
-
-        trade_b = simulate_model_b(
-            df,
-            entry_index,
-            signal,
-            atr
-        )
+            model_trades["A"].append(trade_a)
 
         if trade_b is not None:
-
-            model_trades["B"].append(
-                trade_b
-            )
-
-        # =================================================
-        # MODEL C
-        # =================================================
-
-        trade_c = simulate_model_c(
-            df,
-            entry_index,
-            signal,
-            atr
-        )
+            model_trades["B"].append(trade_b)
 
         if trade_c is not None:
-
-            model_trades["C"].append(
-                trade_c
-            )
-
-    # =====================================================
-    # STATS
-    # =====================================================
+            model_trades["C"].append(trade_c)
 
     return {
         "A": calculate_stats(
             model_trades["A"]
         ),
-
         "B": calculate_stats(
             model_trades["B"]
         ),
-
         "C": calculate_stats(
             model_trades["C"]
         )
@@ -928,27 +792,7 @@ def main():
 
     totals = {
 
-        "A": {
-            "trades": 0,
-            "tp2": 0,
-            "tp1": 0,
-            "tp": 0,
-            "sl": 0,
-            "timeout": 0,
-            "profit": 0.0
-        },
-
-        "B": {
-            "trades": 0,
-            "tp2": 0,
-            "tp1": 0,
-            "tp": 0,
-            "sl": 0,
-            "timeout": 0,
-            "profit": 0.0
-        },
-
-        "C": {
+        model: {
             "trades": 0,
             "tp2": 0,
             "tp1": 0,
@@ -957,10 +801,16 @@ def main():
             "timeout": 0,
             "profit": 0.0
         }
+
+        for model in [
+            "A",
+            "B",
+            "C"
+        ]
     }
 
     # =====================================================
-    # SYMBOL LOOP
+    # SYMBOLS
     # =====================================================
 
     for symbol in SYMBOLS:
@@ -1007,7 +857,7 @@ def main():
             )
 
     # =====================================================
-    # FINAL RESULT
+    # FINAL
     # =====================================================
 
     print(
@@ -1031,8 +881,10 @@ def main():
         d = totals[model]
 
         wins = (
-            d["tp2"] +
-            d["tp1"] +
+            d["tp2"]
+            +
+            d["tp1"]
+            +
             d["tp"]
         )
 
@@ -1047,13 +899,9 @@ def main():
             else 0.0
         )
 
-        # =================================================
-        # EXPECTED PROFIT
-        # =================================================
-
         if model == "A":
 
-            expected_profit = (
+            expected = (
                 d["tp2"] * (1.5 - COST_R)
                 +
                 d["tp1"] * (0.5 - COST_R)
@@ -1063,17 +911,17 @@ def main():
 
         elif model == "B":
 
-            expected_profit = (
+            expected = (
                 d["tp2"] * (1.5 - COST_R)
                 +
-                d["tp1"] * (-0.5 - COST_R)
+                d["tp1"] * (0.0 - COST_R)
                 +
                 d["sl"] * (-1.0 - COST_R)
             )
 
         else:
 
-            expected_profit = (
+            expected = (
                 d["tp"] * (2.0 - COST_R)
                 +
                 d["sl"] * (-1.0 - COST_R)
@@ -1081,7 +929,7 @@ def main():
 
         difference = (
             d["profit"] -
-            expected_profit
+            expected
         )
 
         print(
@@ -1140,7 +988,7 @@ def main():
         print(
             "EXPECTED:",
             round(
-                expected_profit,
+                expected,
                 2
             ),
             "R"
@@ -1156,7 +1004,7 @@ def main():
         )
 
     # =====================================================
-    # FINAL CONSISTENCY CHECK
+    # CONSISTENCY
     # =====================================================
 
     print(
@@ -1171,17 +1019,11 @@ def main():
         "=" * 65
     )
 
-    a_trades = totals["A"]["trades"]
-    b_trades = totals["B"]["trades"]
-    c_trades = totals["C"]["trades"]
+    a = totals["A"]["trades"]
+    b = totals["B"]["trades"]
+    c = totals["C"]["trades"]
 
-    if (
-        a_trades
-        ==
-        b_trades
-        ==
-        c_trades
-    ):
+    if a == b == c:
 
         print(
             "ENTRY COUNT: OK"
@@ -1189,7 +1031,7 @@ def main():
 
         print(
             "COMMON TRADES:",
-            a_trades
+            a
         )
 
     else:
@@ -1200,21 +1042,21 @@ def main():
 
         print(
             "A:",
-            a_trades
+            a
         )
 
         print(
             "B:",
-            b_trades
+            b
         )
 
         print(
             "C:",
-            c_trades
+            c
         )
 
     # =====================================================
-    # FINAL SUMMARY
+    # SUMMARY
     # =====================================================
 
     print(
@@ -1236,14 +1078,8 @@ def main():
     ]:
 
         print(
-            "MODEL",
-            model,
-            "=>",
-            round(
-                totals[model]["profit"],
-                2
-            ),
-            "R"
+            f"MODEL {model}:"
+            f"{totals[model]['profit']:.2f}"
         )
 
     print(
