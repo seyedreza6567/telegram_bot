@@ -34,14 +34,19 @@ def calculate_rsi(series, period=14):
         adjust=False
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(
-        0,
-        np.nan
-    )
+    rs = avg_gain / avg_loss.replace(0, np.nan)
 
-    return 100 - (
+    rsi = 100 - (
         100 / (1 + rs)
     )
+
+    # اگر loss صفر باشد، RSI باید 100 باشد
+    rsi = rsi.where(
+        avg_loss != 0,
+        100
+    )
+
+    return rsi
 
 
 # =========================================================
@@ -73,7 +78,10 @@ def calculate_atr(df, period=14):
 
     previous_close = df["close"].shift(1)
 
-    tr1 = df["high"] - df["low"]
+    tr1 = (
+        df["high"] -
+        df["low"]
+    )
 
     tr2 = (
         df["high"] -
@@ -101,12 +109,60 @@ def calculate_atr(df, period=14):
 
 
 # =========================================================
+# SAFE VALUE
+# =========================================================
+
+def _safe_float(value):
+
+    try:
+
+        value = float(value)
+
+        if np.isfinite(value):
+            return value
+
+    except Exception:
+        pass
+
+    return None
+
+
+# =========================================================
 # ANALYSIS
 # =========================================================
 
 def analyze(df):
 
-    if df is None or len(df) < 250:
+    if df is None:
+        return {
+            "signal": "NO TRADE",
+            "score": 0,
+            "confidence": 0,
+            "long_score": 0,
+            "short_score": 0,
+            "reason": "داده موجود نیست"
+        }
+
+    required_columns = {
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    }
+
+    if not required_columns.issubset(df.columns):
+
+        return {
+            "signal": "NO TRADE",
+            "score": 0,
+            "confidence": 0,
+            "long_score": 0,
+            "short_score": 0,
+            "reason": "ستون‌های داده ناقص است"
+        }
+
+    if len(df) < 250:
 
         return {
             "signal": "NO TRADE",
@@ -118,6 +174,10 @@ def analyze(df):
         }
 
     df = df.copy()
+
+    # -----------------------------------------------------
+    # Indicators
+    # -----------------------------------------------------
 
     close = df["close"]
 
@@ -158,49 +218,95 @@ def analyze(df):
         .mean()
     )
 
+    # -----------------------------------------------------
+    # Use CLOSED candle only
+    # -----------------------------------------------------
+
     last = df.iloc[-1]
     previous = df.iloc[-2]
     previous3 = df.iloc[-4]
     previous5 = df.iloc[-6]
 
-    price = float(last["close"])
+    price = _safe_float(
+        last["close"]
+    )
 
-    ema20 = float(last["ema20"])
-    ema50 = float(last["ema50"])
-    ema200 = float(last["ema200"])
+    ema20 = _safe_float(
+        last["ema20"]
+    )
 
-    rsi = float(last["rsi"])
-    atr = float(last["atr"])
+    ema50 = _safe_float(
+        last["ema50"]
+    )
 
-    macd = float(last["macd"])
-    macd_signal = float(last["macd_signal"])
-    macd_hist = float(last["macd_hist"])
+    ema200 = _safe_float(
+        last["ema200"]
+    )
 
-    previous_macd_hist = float(
+    rsi = _safe_float(
+        last["rsi"]
+    )
+
+    atr = _safe_float(
+        last["atr"]
+    )
+
+    macd = _safe_float(
+        last["macd"]
+    )
+
+    macd_signal = _safe_float(
+        last["macd_signal"]
+    )
+
+    macd_hist = _safe_float(
+        last["macd_hist"]
+    )
+
+    previous_macd_hist = _safe_float(
         previous["macd_hist"]
     )
 
-    previous3_ema20 = float(
+    previous3_ema20 = _safe_float(
         previous3["ema20"]
     )
 
-    previous3_ema50 = float(
+    previous3_ema50 = _safe_float(
         previous3["ema50"]
     )
 
-    previous5_close = float(
+    previous5_close = _safe_float(
         previous5["close"]
     )
 
-    volume = float(
+    volume = _safe_float(
         last["volume"]
     )
 
-    volume_avg = float(
+    volume_avg = _safe_float(
         last["volume_avg"]
     )
 
-    if not np.isfinite(rsi):
+    values = [
+        price,
+        ema20,
+        ema50,
+        ema200,
+        rsi,
+        atr,
+        macd,
+        macd_signal,
+        macd_hist,
+        previous_macd_hist,
+        previous3_ema20,
+        previous3_ema50,
+        previous5_close
+    ]
+
+    if any(
+        value is None
+        for value in values
+    ):
 
         return {
             "signal": "NO TRADE",
@@ -211,10 +317,10 @@ def analyze(df):
             "price": price,
             "atr": atr,
             "rsi": rsi,
-            "reason": "RSI نامعتبر"
+            "reason": "اندیکاتور نامعتبر"
         }
 
-    if not np.isfinite(atr) or atr <= 0:
+    if atr <= 0:
 
         return {
             "signal": "NO TRADE",
@@ -223,8 +329,8 @@ def analyze(df):
             "long_score": 0,
             "short_score": 0,
             "price": price,
-            "rsi": rsi,
             "atr": atr,
+            "rsi": rsi,
             "reason": "ATR نامعتبر"
         }
 
@@ -240,6 +346,35 @@ def analyze(df):
         ema_distance / atr
     )
 
+    long_trend = (
+        price > ema200
+        and
+        ema20 > ema50
+    )
+
+    short_trend = (
+        price < ema200
+        and
+        ema20 < ema50
+    )
+
+    # بازار بدون روند واضح
+    if trend_strength < 0.30:
+
+        return {
+            "signal": "NO TRADE",
+            "score": 0,
+            "confidence": 0,
+            "long_score": 0,
+            "short_score": 0,
+            "price": price,
+            "atr": atr,
+            "rsi": rsi,
+            "trend": "WEAK",
+            "trend_strength": trend_strength,
+            "reason": "قدرت روند کافی نیست"
+        }
+
     # =====================================================
     # MOMENTUM
     # =====================================================
@@ -248,6 +383,10 @@ def analyze(df):
         price - previous5_close
     ) / previous5_close
 
+    # =====================================================
+    # SCORE
+    # =====================================================
+
     long_score = 0
     short_score = 0
 
@@ -255,7 +394,7 @@ def analyze(df):
     short_reasons = []
 
     # =====================================================
-    # LONG
+    # LONG TREND
     # =====================================================
 
     if price > ema200:
@@ -302,35 +441,63 @@ def analyze(df):
             "روند کوتاه‌مدت صعودی"
         )
 
-    if 53 <= rsi <= 63:
+    # =====================================================
+    # LONG RSI
+    # =====================================================
+
+    if 50 <= rsi <= 65:
 
         long_score += 2
 
         long_reasons.append(
-            "RSI مناسب"
+            "RSI صعودی مناسب"
         )
 
-    elif rsi > 68:
+    elif rsi > 72:
 
         long_score -= 2
 
-    elif rsi < 45:
+        long_reasons.append(
+            "RSI بیش‌ازحد بالا"
+        )
 
-        long_score -= 1
+    elif rsi < 40:
 
-    if (
+        long_score -= 2
+
+    # =====================================================
+    # LONG MACD
+    # =====================================================
+
+    macd_bullish = (
         macd > macd_signal
         and
         macd_hist > 0
-        and
+    )
+
+    macd_improving = (
         macd_hist >= previous_macd_hist
-    ):
+    )
+
+    if macd_bullish:
 
         long_score += 2
 
         long_reasons.append(
             "MACD صعودی"
         )
+
+        if macd_improving:
+
+            long_score += 1
+
+            long_reasons.append(
+                "قدرت MACD در حال افزایش"
+            )
+
+    # =====================================================
+    # LONG MOMENTUM
+    # =====================================================
 
     if momentum > 0.001:
 
@@ -340,22 +507,8 @@ def analyze(df):
             "مومنتوم مثبت"
         )
 
-    if (
-        np.isfinite(volume_avg)
-        and
-        volume_avg > 0
-        and
-        volume > volume_avg * 1.05
-    ):
-
-        long_score += 1
-
-        long_reasons.append(
-            "حجم تأییدکننده"
-        )
-
     # =====================================================
-    # SHORT
+    # SHORT TREND
     # =====================================================
 
     if price < ema200:
@@ -402,35 +555,63 @@ def analyze(df):
             "روند کوتاه‌مدت نزولی"
         )
 
-    if 37 <= rsi <= 47:
+    # =====================================================
+    # SHORT RSI
+    # =====================================================
+
+    if 35 <= rsi <= 50:
 
         short_score += 2
 
         short_reasons.append(
-            "RSI مناسب SHORT"
+            "RSI نزولی مناسب"
         )
 
-    elif rsi < 32:
+    elif rsi < 28:
 
         short_score -= 2
 
-    elif rsi > 55:
+        short_reasons.append(
+            "RSI بیش‌ازحد پایین"
+        )
 
-        short_score -= 1
+    elif rsi > 60:
 
-    if (
+        short_score -= 2
+
+    # =====================================================
+    # SHORT MACD
+    # =====================================================
+
+    macd_bearish = (
         macd < macd_signal
         and
         macd_hist < 0
-        and
+    )
+
+    macd_weakening = (
         macd_hist <= previous_macd_hist
-    ):
+    )
+
+    if macd_bearish:
 
         short_score += 2
 
         short_reasons.append(
             "MACD نزولی"
         )
+
+        if macd_weakening:
+
+            short_score += 1
+
+            short_reasons.append(
+                "قدرت MACD نزولی"
+            )
+
+    # =====================================================
+    # SHORT MOMENTUM
+    # =====================================================
 
     if momentum < -0.001:
 
@@ -440,40 +621,63 @@ def analyze(df):
             "مومنتوم منفی"
         )
 
+    # =====================================================
+    # VOLUME
+    # =====================================================
+
+    volume_confirmation = False
+
     if (
-        np.isfinite(volume_avg)
+        volume is not None
+        and
+        volume_avg is not None
         and
         volume_avg > 0
-        and
-        volume > volume_avg * 1.05
     ):
 
-        short_score += 1
+        volume_confirmation = (
+            volume > volume_avg * 1.05
+        )
 
-        short_reasons.append(
-            "حجم تأییدکننده"
+    if volume_confirmation:
+
+        if long_trend:
+
+            long_score += 1
+
+            long_reasons.append(
+                "حجم تأییدکننده"
+            )
+
+        elif short_trend:
+
+            short_score += 1
+
+            short_reasons.append(
+                "حجم تأییدکننده"
+            )
+
+    # =====================================================
+    # TREND GATE
+    # =====================================================
+
+    if not long_trend:
+
+        long_score = min(
+            long_score,
+            7
+        )
+
+    if not short_trend:
+
+        short_score = min(
+            short_score,
+            7
         )
 
     # =====================================================
-    # بازار ضعیف
+    # FINAL DECISION
     # =====================================================
-
-    if trend_strength < 0.30:
-
-        return {
-            "signal": "NO TRADE",
-            "score": max(
-                long_score,
-                short_score
-            ),
-            "confidence": 0,
-            "long_score": long_score,
-            "short_score": short_score,
-            "price": price,
-            "rsi": rsi,
-            "atr": atr,
-            "reason": "قدرت روند کافی نیست"
-        }
 
     best_score = max(
         long_score,
@@ -484,34 +688,46 @@ def analyze(df):
         long_score - short_score
     )
 
-    # =====================================================
     # LONG
-    # =====================================================
-
     if (
+        long_trend
+        and
         long_score >= 9
         and
         long_score > short_score
         and
-        difference >= 3
+        difference >= 2
     ):
 
-        stop_loss = price - atr * 2
-        tp1 = price + atr * 2
-        tp2 = price + atr * 4
+        stop_loss = (
+            price -
+            atr * 2.0
+        )
+
+        tp1 = (
+            price +
+            atr * 2.0
+        )
+
+        tp2 = (
+            price +
+            atr * 4.0
+        )
 
         return {
             "signal": "LONG",
             "score": long_score,
             "confidence": min(
                 100,
-                long_score * 8
+                55 + long_score * 4
             ),
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
             "rsi": rsi,
             "atr": atr,
+            "trend": "BULLISH",
+            "trend_strength": trend_strength,
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
@@ -520,34 +736,46 @@ def analyze(df):
             )
         }
 
-    # =====================================================
     # SHORT
-    # =====================================================
-
     if (
-        short_score >= 10
+        short_trend
+        and
+        short_score >= 9
         and
         short_score > long_score
         and
-        difference >= 4
+        difference >= 2
     ):
 
-        stop_loss = price + atr * 2
-        tp1 = price - atr * 2
-        tp2 = price - atr * 4
+        stop_loss = (
+            price +
+            atr * 2.0
+        )
+
+        tp1 = (
+            price -
+            atr * 2.0
+        )
+
+        tp2 = (
+            price -
+            atr * 4.0
+        )
 
         return {
             "signal": "SHORT",
             "score": short_score,
             "confidence": min(
                 100,
-                short_score * 8
+                55 + short_score * 4
             ),
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
             "rsi": rsi,
             "atr": atr,
+            "trend": "BEARISH",
+            "trend_strength": trend_strength,
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
@@ -565,9 +793,23 @@ def analyze(df):
         "price": price,
         "rsi": rsi,
         "atr": atr,
+        "trend": (
+            "BULLISH"
+            if long_trend
+            else
+            "BEARISH"
+            if short_trend
+            else
+            "NEUTRAL"
+        ),
+        "trend_strength": trend_strength,
         "reason": "شرایط ورود کامل نیست"
     }
 
+
+# =========================================================
+# TEST
+# =========================================================
 
 if __name__ == "__main__":
 
