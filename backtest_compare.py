@@ -40,6 +40,7 @@ MIN_ANALYSIS_CANDLES = 250
 
 MAX_HOLD_CANDLES = 100
 
+# هزینه رفت و برگشت معامله بر حسب R
 COST_R = 0.05
 
 
@@ -77,17 +78,21 @@ def symbol_name(symbol):
 
 
 # =========================================================
-# SIMULATE MODEL A
+# MODEL A
 #
-# SL  = 2 ATR
+# Entry
+# SL = 2 ATR
 # TP1 = 2 ATR
 # TP2 = 4 ATR
 #
-# TP1:
-# نصف پوزیشن بسته می‌شود
-#
 # بعد از TP1:
-# باقی‌مانده BE
+# نصف معامله بسته شده
+# نصف باقی‌مانده BE
+#
+# نتیجه:
+# SL  = -1R
+# TP1 = +0.5R
+# TP2 = +1.5R
 # =========================================================
 
 def simulate_model_a(
@@ -101,7 +106,10 @@ def simulate_model_a(
         df.iloc[entry_index]["open"]
     )
 
-    if entry is None or atr is None or atr <= 0:
+    if entry is None:
+        return None
+
+    if atr is None or atr <= 0:
         return None
 
     if signal == "LONG":
@@ -154,9 +162,9 @@ def simulate_model_a(
                 hit_sl = low <= sl
                 hit_tp1 = high >= tp1
 
-                # محافظه کارانه:
-                # اگر SL و TP1 در یک کندل باشند،
-                # SL اول محسوب می‌شود.
+                # محافظه‌کارانه:
+                # اگر هر دو در یک کندل باشند،
+                # SL را اول در نظر می‌گیریم.
 
                 if hit_sl:
 
@@ -170,7 +178,7 @@ def simulate_model_a(
 
                     tp1_hit = True
 
-                    # اگر TP2 همان کندل خورده باشد
+                    # TP2 در همان کندل
                     if high >= tp2:
 
                         return {
@@ -267,17 +275,19 @@ def simulate_model_a(
 
 
 # =========================================================
-# SIMULATE MODEL B
+# MODEL B
 #
-# SL  = 2 ATR
+# SL = 2 ATR
 # TP1 = 2 ATR
 # TP2 = 4 ATR
 #
-# TP1:
-# نصف پوزیشن بسته می‌شود
+# بعد TP1:
+# نصف معامله بسته می‌شود
+# نصف باقی‌مانده SL اولیه را حفظ می‌کند
 #
-# بعد از TP1:
-# SL باقی‌مانده همان SL اولیه است.
+# TP1 +0.5R
+# اگر باقی‌مانده به SL برسد:
+# مجموع معامله = -0.5R
 # =========================================================
 
 def simulate_model_b(
@@ -291,7 +301,10 @@ def simulate_model_b(
         df.iloc[entry_index]["open"]
     )
 
-    if entry is None or atr is None or atr <= 0:
+    if entry is None:
+        return None
+
+    if atr is None or atr <= 0:
         return None
 
     if signal == "LONG":
@@ -452,11 +465,14 @@ def simulate_model_b(
 
 
 # =========================================================
-# SIMULATE MODEL C
+# MODEL C
 #
 # SL = 2 ATR
 # TP = 4 ATR
 # بدون TP1
+#
+# TP = +2R
+# SL = -1R
 # =========================================================
 
 def simulate_model_c(
@@ -470,7 +486,10 @@ def simulate_model_c(
         df.iloc[entry_index]["open"]
     )
 
-    if entry is None or atr is None or atr <= 0:
+    if entry is None:
+        return None
+
+    if atr is None or atr <= 0:
         return None
 
     if signal == "LONG":
@@ -508,6 +527,10 @@ def simulate_model_c(
         if high is None or low is None:
             continue
 
+        # =================================================
+        # LONG
+        # =================================================
+
         if signal == "LONG":
 
             hit_sl = low <= sl
@@ -528,6 +551,10 @@ def simulate_model_c(
                     "r": 2.0 - COST_R,
                     "bars": j - entry_index + 1
                 }
+
+        # =================================================
+        # SHORT
+        # =================================================
 
         elif signal == "SHORT":
 
@@ -561,7 +588,7 @@ def simulate_model_c(
 
 
 # =========================================================
-# STATS
+# CALCULATE STATS
 # =========================================================
 
 def calculate_stats(trades):
@@ -579,43 +606,74 @@ def calculate_stats(trades):
             "profit": 0.0
         }
 
-    data = pd.DataFrame(
-        trades
+    total_profit = 0.0
+
+    tp2 = 0
+    tp1 = 0
+    tp = 0
+    sl = 0
+    timeout = 0
+
+    # =====================================================
+    # سود فقط از تک تک معاملات
+    # =====================================================
+
+    for trade in trades:
+
+        result = trade.get(
+            "result",
+            "TIMEOUT"
+        )
+
+        r = safe_float(
+            trade.get("r", 0.0)
+        )
+
+        if r is None:
+
+            r = 0.0
+
+        total_profit += r
+
+        if result == "TP2":
+
+            tp2 += 1
+
+        elif result == "TP1":
+
+            tp1 += 1
+
+        elif result == "TP":
+
+            tp += 1
+
+        elif result == "SL":
+
+            sl += 1
+
+        elif result == "TIMEOUT":
+
+            timeout += 1
+
+    # =====================================================
+    # تعداد واقعی
+    # =====================================================
+
+    total_trades = (
+        tp2 +
+        tp1 +
+        tp +
+        sl +
+        timeout
     )
 
-    tp2 = len(
-        data[
-            data["result"] == "TP2"
-        ]
-    )
-
-    tp1 = len(
-        data[
-            data["result"] == "TP1"
-        ]
-    )
-
-    tp = len(
-        data[
-            data["result"] == "TP"
-        ]
-    )
-
-    sl = len(
-        data[
-            data["result"] == "SL"
-        ]
-    )
-
-    timeout = len(
-        data[
-            data["result"] == "TIMEOUT"
-        ]
-    )
+    # =====================================================
+    # WIN RATE
+    # =====================================================
 
     wins = (
-        tp1 +
         tp2 +
+        tp1 +
         tp
     )
 
@@ -627,20 +685,46 @@ def calculate_stats(trades):
     win_rate = (
         wins / completed * 100
         if completed > 0
-        else 0
+        else 0.0
     )
 
-    return {
-        "trades": len(data),
-        "tp2": tp2,
-        "tp1": tp1,
-        "tp": tp,
-        "sl": sl,
-        "timeout": timeout,
-        "win_rate": win_rate,
-        "profit": float(
-            data["r"].sum()
+    # =====================================================
+    # SANITY CHECK
+    # =====================================================
+
+    if total_trades != len(trades):
+
+        print(
+            "\nWARNING: TRADE COUNT MISMATCH"
         )
+
+        print(
+            "Raw trades:",
+            len(trades)
+        )
+
+        print(
+            "Calculated:",
+            total_trades
+        )
+
+    return {
+
+        "trades": total_trades,
+
+        "tp2": tp2,
+
+        "tp1": tp1,
+
+        "tp": tp,
+
+        "sl": sl,
+
+        "timeout": timeout,
+
+        "win_rate": win_rate,
+
+        "profit": total_profit
     }
 
 
@@ -688,22 +772,21 @@ def backtest_symbol(symbol):
 
         return None
 
+    df = df.copy()
+
     df = df.reset_index(
         drop=True
     )
 
     model_trades = {
+
         "A": [],
         "B": [],
         "C": []
     }
 
     # =====================================================
-    # IMPORTANT
-    #
-    # یک فرصت ورود
-    # سپس معامله تا پایان
-    # سپس جستجوی سیگنال بعدی
+    # ENTRY LOOP
     # =====================================================
 
     i = MIN_ANALYSIS_CANDLES
@@ -754,7 +837,7 @@ def backtest_symbol(symbol):
             continue
 
         # =================================================
-        # هر سه مدل از همین ورود استفاده می‌کنند.
+        # SAME ENTRY FOR ALL MODELS
         # =================================================
 
         trade_a = simulate_model_a(
@@ -797,11 +880,9 @@ def backtest_symbol(symbol):
             )
 
         # =================================================
-        # CRITICAL
+        # NO OVERLAPPING ENTRY
         #
-        # معامله A را معیار پایان فرصت می‌گیریم.
-        # بنابراین ورود بعدی تا پایان معامله قبلی
-        # اتفاق نمی‌افتد.
+        # مدل A معیار حرکت به فرصت بعدی است.
         # =================================================
 
         if trade_a is not None:
@@ -813,20 +894,27 @@ def backtest_symbol(symbol):
 
             i += max(
                 1,
-                bars
+                int(bars)
             )
 
         else:
 
             i += 1
 
+    # =====================================================
+    # STATS
+    # =====================================================
+
     return {
+
         "A": calculate_stats(
             model_trades["A"]
         ),
+
         "B": calculate_stats(
             model_trades["B"]
         ),
+
         "C": calculate_stats(
             model_trades["C"]
         )
@@ -872,6 +960,10 @@ def main():
         }
     }
 
+    # =====================================================
+    # SYMBOL LOOP
+    # =====================================================
+
     for symbol in SYMBOLS:
 
         try:
@@ -881,6 +973,7 @@ def main():
             )
 
             if result is None:
+
                 continue
 
             for model in [
@@ -909,13 +1002,13 @@ def main():
         except Exception as e:
 
             print(
-                "ERROR:",
+                "\nERROR:",
                 symbol,
                 e
             )
 
     # =====================================================
-    # FINAL
+    # FINAL RESULT
     # =====================================================
 
     print(
@@ -939,8 +1032,8 @@ def main():
         d = totals[model]
 
         wins = (
-            d["tp1"] +
             d["tp2"] +
+            d["tp1"] +
             d["tp"]
         )
 
@@ -952,7 +1045,48 @@ def main():
         win_rate = (
             wins / completed * 100
             if completed > 0
-            else 0
+            else 0.0
+        )
+
+        # =================================================
+        # مستقل از هر محاسبه قبلی
+        # =================================================
+
+        if model == "A":
+
+            expected_profit = (
+                d["tp2"] * (1.5 - COST_R)
+                +
+                d["tp1"] * (0.5 - COST_R)
+                +
+                d["sl"] * (-1.0 - COST_R)
+            )
+
+        elif model == "B":
+
+            expected_profit = (
+                d["tp2"] * (1.5 - COST_R)
+                +
+                d["tp1"] * (-0.5 - COST_R)
+                +
+                d["sl"] * (-1.0 - COST_R)
+            )
+
+        else:
+
+            expected_profit = (
+                d["tp"] * (2.0 - COST_R)
+                +
+                d["sl"] * (-1.0 - COST_R)
+            )
+
+        # =================================================
+        # اختلاف کنترل
+        # =================================================
+
+        difference = (
+            d["profit"] -
+            expected_profit
         )
 
         print(
@@ -1008,12 +1142,84 @@ def main():
             "R"
         )
 
+        print(
+            "EXPECTED:",
+            round(
+                expected_profit,
+                2
+            ),
+            "R"
+        )
+
+        print(
+            "CHECK DIFFERENCE:",
+            round(
+                difference,
+                4
+            ),
+            "R"
+        )
+
+    # =====================================================
+    # FINAL CHECK
+    # =====================================================
+
     print(
         "\n" + "=" * 65
     )
 
     print(
-        "✅ COMPARISON FINISHED"
+        "FINAL CONSISTENCY CHECK"
+    )
+
+    print(
+        "=" * 65
+    )
+
+    if (
+        totals["A"]["trades"]
+        ==
+        totals["B"]["trades"]
+        ==
+        totals["C"]["trades"]
+    ):
+
+        print(
+            "ENTRY COUNT: OK"
+        )
+
+        print(
+            "COMMON TRADES:",
+            totals["A"]["trades"]
+        )
+
+    else:
+
+        print(
+            "ENTRY COUNT: ERROR"
+        )
+
+        print(
+            "A:",
+            totals["A"]["trades"]
+        )
+
+        print(
+            "B:",
+            totals["B"]["trades"]
+        )
+
+        print(
+            "C:",
+            totals["C"]["trades"]
+        )
+
+    print(
+        "\n" + "=" * 65
+    )
+
+    print(
+        "✅ BACKTEST FINISHED"
     )
 
     print(
