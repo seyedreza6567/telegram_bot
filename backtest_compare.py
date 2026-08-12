@@ -5,6 +5,10 @@ from scanner import get_klines
 from analysis_engine import analyze
 
 
+# =========================================================
+# SYMBOLS
+# =========================================================
+
 SYMBOLS = [
     "BTC-SWAP-USDT",
     "ETH-SWAP-USDT",
@@ -23,26 +27,46 @@ SYMBOLS = [
     "SUI-SWAP-USDT",
 ]
 
+
+# =========================================================
+# SETTINGS
+# =========================================================
+
 TIMEFRAME = "1h"
+
 CANDLE_LIMIT = 1000
+
 MIN_ANALYSIS_CANDLES = 250
+
 MAX_HOLD_CANDLES = 100
+
 COST_R = 0.05
 
+
+# =========================================================
+# SAFE FLOAT
+# =========================================================
 
 def safe_float(value):
 
     try:
+
         value = float(value)
 
         if np.isfinite(value):
+
             return value
 
     except Exception:
+
         pass
 
     return None
 
+
+# =========================================================
+# SYMBOL NAME
+# =========================================================
 
 def symbol_name(symbol):
 
@@ -53,15 +77,24 @@ def symbol_name(symbol):
 
 
 # =========================================================
-# SIMULATE
+# SIMULATE MODEL A
+#
+# SL  = 2 ATR
+# TP1 = 2 ATR
+# TP2 = 4 ATR
+#
+# TP1:
+# نصف پوزیشن بسته می‌شود
+#
+# بعد از TP1:
+# باقی‌مانده BE
 # =========================================================
 
-def simulate_trade(
+def simulate_model_a(
     df,
     entry_index,
     signal,
-    atr,
-    model
+    atr
 ):
 
     entry = safe_float(
@@ -116,18 +149,14 @@ def simulate_trade(
 
         if signal == "LONG":
 
-            # -------------------------------------------------
-            # BEFORE TP1
-            # -------------------------------------------------
-
             if not tp1_hit:
 
                 hit_sl = low <= sl
                 hit_tp1 = high >= tp1
 
                 # محافظه کارانه:
-                # اگر SL و TP1 داخل یک کندل هر دو دیده شوند
-                # SL را اول در نظر می‌گیریم.
+                # اگر SL و TP1 در یک کندل باشند،
+                # SL اول محسوب می‌شود.
 
                 if hit_sl:
 
@@ -139,119 +168,45 @@ def simulate_trade(
 
                 if hit_tp1:
 
-                    # =================================================
-                    # MODEL C
-                    # =================================================
+                    tp1_hit = True
 
-                    if model == "C":
+                    # اگر TP2 همان کندل خورده باشد
+                    if high >= tp2:
 
-                        # C اصلاً TP1 ندارد
-                        pass
+                        return {
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
+                            "bars": j - entry_index + 1
+                        }
 
-                    else:
+                    continue
 
-                        tp1_hit = True
+            else:
 
-                        # اگر TP2 همان کندل خورده باشد
-                        if high >= tp2:
+                hit_be = low <= entry
+                hit_tp2 = high >= tp2
 
-                            return {
-                                "result": "TP2",
-                                "r": 1.5 - COST_R,
-                                "bars": j - entry_index + 1
-                            }
-
-                        continue
-
-            # =================================================
-            # MODEL C
-            # =================================================
-
-            if model == "C":
-
-                if high >= tp2:
+                if hit_be:
 
                     return {
-                        "result": "TP2",
-                        "r": 2.0 - COST_R,
+                        "result": "TP1",
+                        "r": 0.5 - COST_R,
                         "bars": j - entry_index + 1
                     }
 
-            # =================================================
-            # AFTER TP1
-            # =================================================
+                if hit_tp2:
 
-            elif tp1_hit:
-
-                # -------------------------------------------------
-                # MODEL A
-                # TP1 -> BE
-                # -------------------------------------------------
-
-                if model == "A":
-
-                    hit_be = low <= entry
-                    hit_tp2 = high >= tp2
-
-                    if hit_be:
-
-                        return {
-                            "result": "TP1",
-                            "r": 0.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
-
-                    if hit_tp2:
-
-                        return {
-                            "result": "TP2",
-                            "r": 1.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
-
-                # -------------------------------------------------
-                # MODEL B
-                # TP1 -> SL اولیه
-                # -------------------------------------------------
-
-                elif model == "B":
-
-                    hit_sl = low <= sl
-                    hit_tp2 = high >= tp2
-
-                    if hit_sl and hit_tp2:
-
-                        return {
-                            "result": "TP1",
-                            "r": -0.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
-
-                    if hit_sl:
-
-                        return {
-                            "result": "TP1",
-                            "r": -0.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
-
-                    if hit_tp2:
-
-                        return {
-                            "result": "TP2",
-                            "r": 1.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
 
         # =================================================
         # SHORT
         # =================================================
 
         elif signal == "SHORT":
-
-            # -------------------------------------------------
-            # BEFORE TP1
-            # -------------------------------------------------
 
             if not tp1_hit:
 
@@ -268,62 +223,140 @@ def simulate_trade(
 
                 if hit_tp1:
 
-                    if model == "C":
+                    tp1_hit = True
 
-                        pass
+                    if low <= tp2:
 
-                    else:
+                        return {
+                            "result": "TP2",
+                            "r": 1.5 - COST_R,
+                            "bars": j - entry_index + 1
+                        }
 
-                        tp1_hit = True
+                    continue
 
-                        if low <= tp2:
+            else:
 
-                            return {
-                                "result": "TP2",
-                                "r": 1.5 - COST_R,
-                                "bars": j - entry_index + 1
-                            }
+                hit_be = high >= entry
+                hit_tp2 = low <= tp2
 
-                        continue
-
-            # =================================================
-            # MODEL C
-            # =================================================
-
-            if model == "C":
-
-                if low <= tp2:
+                if hit_be:
 
                     return {
-                        "result": "TP2",
-                        "r": 2.0 - COST_R,
+                        "result": "TP1",
+                        "r": 0.5 - COST_R,
                         "bars": j - entry_index + 1
                     }
 
-            # =================================================
-            # AFTER TP1
-            # =================================================
+                if hit_tp2:
 
-            elif tp1_hit:
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
 
-                # -------------------------------------------------
-                # MODEL A
-                # -------------------------------------------------
+    return {
+        "result": "TIMEOUT",
+        "r": 0.0,
+        "bars": max(
+            1,
+            last_index - entry_index
+        )
+    }
 
-                if model == "A":
 
-                    hit_be = high >= entry
-                    hit_tp2 = low <= tp2
+# =========================================================
+# SIMULATE MODEL B
+#
+# SL  = 2 ATR
+# TP1 = 2 ATR
+# TP2 = 4 ATR
+#
+# TP1:
+# نصف پوزیشن بسته می‌شود
+#
+# بعد از TP1:
+# SL باقی‌مانده همان SL اولیه است.
+# =========================================================
 
-                    if hit_be:
+def simulate_model_b(
+    df,
+    entry_index,
+    signal,
+    atr
+):
 
-                        return {
-                            "result": "TP1",
-                            "r": 0.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
+    entry = safe_float(
+        df.iloc[entry_index]["open"]
+    )
 
-                    if hit_tp2:
+    if entry is None or atr is None or atr <= 0:
+        return None
+
+    if signal == "LONG":
+
+        sl = entry - atr * 2.0
+        tp1 = entry + atr * 2.0
+        tp2 = entry + atr * 4.0
+
+    elif signal == "SHORT":
+
+        sl = entry + atr * 2.0
+        tp1 = entry - atr * 2.0
+        tp2 = entry - atr * 4.0
+
+    else:
+
+        return None
+
+    tp1_hit = False
+
+    last_index = min(
+        len(df),
+        entry_index + MAX_HOLD_CANDLES + 1
+    )
+
+    for j in range(
+        entry_index,
+        last_index
+    ):
+
+        high = safe_float(
+            df.iloc[j]["high"]
+        )
+
+        low = safe_float(
+            df.iloc[j]["low"]
+        )
+
+        if high is None or low is None:
+            continue
+
+        # =================================================
+        # LONG
+        # =================================================
+
+        if signal == "LONG":
+
+            if not tp1_hit:
+
+                hit_sl = low <= sl
+                hit_tp1 = high >= tp1
+
+                if hit_sl:
+
+                    return {
+                        "result": "SL",
+                        "r": -1.0 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+                if hit_tp1:
+
+                    tp1_hit = True
+
+                    if high >= tp2:
 
                         return {
                             "result": "TP2",
@@ -331,30 +364,191 @@ def simulate_trade(
                             "bars": j - entry_index + 1
                         }
 
-                # -------------------------------------------------
-                # MODEL B
-                # -------------------------------------------------
+                    continue
 
-                elif model == "B":
+            else:
 
-                    hit_sl = high >= sl
-                    hit_tp2 = low <= tp2
+                hit_sl = low <= sl
+                hit_tp2 = high >= tp2
 
-                    if hit_sl:
+                if hit_sl:
 
-                        return {
-                            "result": "TP1",
-                            "r": -0.5 - COST_R,
-                            "bars": j - entry_index + 1
-                        }
+                    return {
+                        "result": "TP1",
+                        "r": -0.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
 
-                    if hit_tp2:
+                if hit_tp2:
+
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+        # =================================================
+        # SHORT
+        # =================================================
+
+        elif signal == "SHORT":
+
+            if not tp1_hit:
+
+                hit_sl = high >= sl
+                hit_tp1 = low <= tp1
+
+                if hit_sl:
+
+                    return {
+                        "result": "SL",
+                        "r": -1.0 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+                if hit_tp1:
+
+                    tp1_hit = True
+
+                    if low <= tp2:
 
                         return {
                             "result": "TP2",
                             "r": 1.5 - COST_R,
                             "bars": j - entry_index + 1
                         }
+
+                    continue
+
+            else:
+
+                hit_sl = high >= sl
+                hit_tp2 = low <= tp2
+
+                if hit_sl:
+
+                    return {
+                        "result": "TP1",
+                        "r": -0.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+                if hit_tp2:
+
+                    return {
+                        "result": "TP2",
+                        "r": 1.5 - COST_R,
+                        "bars": j - entry_index + 1
+                    }
+
+    return {
+        "result": "TIMEOUT",
+        "r": 0.0,
+        "bars": max(
+            1,
+            last_index - entry_index
+        )
+    }
+
+
+# =========================================================
+# SIMULATE MODEL C
+#
+# SL = 2 ATR
+# TP = 4 ATR
+# بدون TP1
+# =========================================================
+
+def simulate_model_c(
+    df,
+    entry_index,
+    signal,
+    atr
+):
+
+    entry = safe_float(
+        df.iloc[entry_index]["open"]
+    )
+
+    if entry is None or atr is None or atr <= 0:
+        return None
+
+    if signal == "LONG":
+
+        sl = entry - atr * 2.0
+        tp = entry + atr * 4.0
+
+    elif signal == "SHORT":
+
+        sl = entry + atr * 2.0
+        tp = entry - atr * 4.0
+
+    else:
+
+        return None
+
+    last_index = min(
+        len(df),
+        entry_index + MAX_HOLD_CANDLES + 1
+    )
+
+    for j in range(
+        entry_index,
+        last_index
+    ):
+
+        high = safe_float(
+            df.iloc[j]["high"]
+        )
+
+        low = safe_float(
+            df.iloc[j]["low"]
+        )
+
+        if high is None or low is None:
+            continue
+
+        if signal == "LONG":
+
+            hit_sl = low <= sl
+            hit_tp = high >= tp
+
+            if hit_sl:
+
+                return {
+                    "result": "SL",
+                    "r": -1.0 - COST_R,
+                    "bars": j - entry_index + 1
+                }
+
+            if hit_tp:
+
+                return {
+                    "result": "TP",
+                    "r": 2.0 - COST_R,
+                    "bars": j - entry_index + 1
+                }
+
+        elif signal == "SHORT":
+
+            hit_sl = high >= sl
+            hit_tp = low <= tp
+
+            if hit_sl:
+
+                return {
+                    "result": "SL",
+                    "r": -1.0 - COST_R,
+                    "bars": j - entry_index + 1
+                }
+
+            if hit_tp:
+
+                return {
+                    "result": "TP",
+                    "r": 2.0 - COST_R,
+                    "bars": j - entry_index + 1
+                }
 
     return {
         "result": "TIMEOUT",
@@ -370,7 +564,7 @@ def simulate_trade(
 # STATS
 # =========================================================
 
-def stats(trades):
+def calculate_stats(trades):
 
     if not trades:
 
@@ -378,33 +572,57 @@ def stats(trades):
             "trades": 0,
             "tp2": 0,
             "tp1": 0,
+            "tp": 0,
             "sl": 0,
             "timeout": 0,
-            "win_rate": 0,
-            "profit": 0
+            "win_rate": 0.0,
+            "profit": 0.0
         }
 
-    data = pd.DataFrame(trades)
+    data = pd.DataFrame(
+        trades
+    )
 
     tp2 = len(
-        data[data["result"] == "TP2"]
+        data[
+            data["result"] == "TP2"
+        ]
     )
 
     tp1 = len(
-        data[data["result"] == "TP1"]
+        data[
+            data["result"] == "TP1"
+        ]
+    )
+
+    tp = len(
+        data[
+            data["result"] == "TP"
+        ]
     )
 
     sl = len(
-        data[data["result"] == "SL"]
+        data[
+            data["result"] == "SL"
+        ]
     )
 
     timeout = len(
-        data[data["result"] == "TIMEOUT"]
+        data[
+            data["result"] == "TIMEOUT"
+        ]
     )
 
-    wins = tp1 + tp2
+    wins = (
+        tp1 +
+        tp2 +
+        tp
+    )
 
-    completed = wins + sl
+    completed = (
+        wins +
+        sl
+    )
 
     win_rate = (
         wins / completed * 100
@@ -412,38 +630,37 @@ def stats(trades):
         else 0
     )
 
-    profit = float(
-        data["r"].sum()
-    )
-
     return {
         "trades": len(data),
         "tp2": tp2,
         "tp1": tp1,
+        "tp": tp,
         "sl": sl,
         "timeout": timeout,
         "win_rate": win_rate,
-        "profit": profit
+        "profit": float(
+            data["r"].sum()
+        )
     }
 
 
 # =========================================================
-# ONE SYMBOL
+# BACKTEST SYMBOL
 # =========================================================
 
 def backtest_symbol(symbol):
 
     print(
-        "\n" + "=" * 60
+        "\n" + "=" * 65
     )
 
     print(
-        "TEST:",
+        "BACKTEST:",
         symbol_name(symbol)
     )
 
     print(
-        "=" * 60
+        "=" * 65
     )
 
     df = get_klines(
@@ -454,11 +671,15 @@ def backtest_symbol(symbol):
 
     if df is None:
 
-        print("DATA ERROR")
+        print(
+            "DATA ERROR"
+        )
 
         return None
 
-    if len(df) < MIN_ANALYSIS_CANDLES + 25:
+    if len(df) < (
+        MIN_ANALYSIS_CANDLES + 25
+    ):
 
         print(
             "NOT ENOUGH DATA:",
@@ -471,26 +692,44 @@ def backtest_symbol(symbol):
         drop=True
     )
 
-    signals = []
+    model_trades = {
+        "A": [],
+        "B": [],
+        "C": []
+    }
 
-    for i in range(
-        MIN_ANALYSIS_CANDLES,
-        len(df) - 1
-    ):
+    # =====================================================
+    # IMPORTANT
+    #
+    # یک فرصت ورود
+    # سپس معامله تا پایان
+    # سپس جستجوی سیگنال بعدی
+    # =====================================================
+
+    i = MIN_ANALYSIS_CANDLES
+
+    while i < len(df) - 1:
 
         historical = df.iloc[:i].copy()
 
         try:
 
-            result = analyze(
+            analysis = analyze(
                 historical
             )
 
-        except Exception:
+        except Exception as e:
+
+            print(
+                "ANALYSIS ERROR:",
+                e
+            )
+
+            i += 1
 
             continue
 
-        signal = result.get(
+        signal = analysis.get(
             "signal",
             "NO TRADE"
         )
@@ -500,67 +739,98 @@ def backtest_symbol(symbol):
             "SHORT"
         ]:
 
+            i += 1
+
             continue
 
         atr = safe_float(
-            result.get("atr")
+            analysis.get("atr")
         )
 
         if atr is None or atr <= 0:
 
+            i += 1
+
             continue
 
-        signals.append({
-            "entry_index": i,
-            "signal": signal,
-            "atr": atr
-        })
+        # =================================================
+        # هر سه مدل از همین ورود استفاده می‌کنند.
+        # =================================================
 
-    if not signals:
-
-        return None
-
-    all_trades = {
-        "A": [],
-        "B": [],
-        "C": []
-    }
-
-    for item in signals:
-
-        for model in [
-            "A",
-            "B",
-            "C"
-        ]:
-
-            trade = simulate_trade(
-                df,
-                item["entry_index"],
-                item["signal"],
-                item["atr"],
-                model
-            )
-
-            if trade:
-
-                all_trades[model].append(
-                    trade
-                )
-
-    result = {}
-
-    for model in [
-        "A",
-        "B",
-        "C"
-    ]:
-
-        result[model] = stats(
-            all_trades[model]
+        trade_a = simulate_model_a(
+            df,
+            i,
+            signal,
+            atr
         )
 
-    return result
+        trade_b = simulate_model_b(
+            df,
+            i,
+            signal,
+            atr
+        )
+
+        trade_c = simulate_model_c(
+            df,
+            i,
+            signal,
+            atr
+        )
+
+        if trade_a is not None:
+
+            model_trades["A"].append(
+                trade_a
+            )
+
+        if trade_b is not None:
+
+            model_trades["B"].append(
+                trade_b
+            )
+
+        if trade_c is not None:
+
+            model_trades["C"].append(
+                trade_c
+            )
+
+        # =================================================
+        # CRITICAL
+        #
+        # معامله A را معیار پایان فرصت می‌گیریم.
+        # بنابراین ورود بعدی تا پایان معامله قبلی
+        # اتفاق نمی‌افتد.
+        # =================================================
+
+        if trade_a is not None:
+
+            bars = trade_a.get(
+                "bars",
+                1
+            )
+
+            i += max(
+                1,
+                bars
+            )
+
+        else:
+
+            i += 1
+
+    return {
+        "A": calculate_stats(
+            model_trades["A"]
+        ),
+        "B": calculate_stats(
+            model_trades["B"]
+        ),
+        "C": calculate_stats(
+            model_trades["C"]
+        )
+    }
 
 
 # =========================================================
@@ -575,6 +845,7 @@ def main():
             "trades": 0,
             "tp2": 0,
             "tp1": 0,
+            "tp": 0,
             "sl": 0,
             "timeout": 0,
             "profit": 0.0
@@ -584,6 +855,7 @@ def main():
             "trades": 0,
             "tp2": 0,
             "tp1": 0,
+            "tp": 0,
             "sl": 0,
             "timeout": 0,
             "profit": 0.0
@@ -593,6 +865,7 @@ def main():
             "trades": 0,
             "tp2": 0,
             "tp1": 0,
+            "tp": 0,
             "sl": 0,
             "timeout": 0,
             "profit": 0.0
@@ -620,6 +893,7 @@ def main():
                     "trades",
                     "tp2",
                     "tp1",
+                    "tp",
                     "sl",
                     "timeout"
                 ]:
@@ -640,16 +914,20 @@ def main():
                 e
             )
 
+    # =====================================================
+    # FINAL
+    # =====================================================
+
     print(
-        "\n" + "=" * 60
+        "\n" + "=" * 65
     )
 
     print(
-        "FINAL EXIT COMPARISON"
+        "🏆 FINAL EXIT COMPARISON"
     )
 
     print(
-        "=" * 60
+        "=" * 65
     )
 
     for model in [
@@ -662,7 +940,8 @@ def main():
 
         wins = (
             d["tp1"] +
-            d["tp2"]
+            d["tp2"] +
+            d["tp"]
         )
 
         completed = (
@@ -697,6 +976,11 @@ def main():
         )
 
         print(
+            "TP:",
+            d["tp"]
+        )
+
+        print(
             "SL:",
             d["sl"]
         )
@@ -725,17 +1009,21 @@ def main():
         )
 
     print(
-        "\n" + "=" * 60
+        "\n" + "=" * 65
     )
 
     print(
-        "TEST FINISHED"
+        "✅ COMPARISON FINISHED"
     )
 
     print(
-        "=" * 60
+        "=" * 65
     )
 
+
+# =========================================================
+# RUN
+# =========================================================
 
 if __name__ == "__main__":
 
