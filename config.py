@@ -2,6 +2,10 @@ import os
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-TOOBIT_API_KEY = "Xc4VH0Luc25sOY12hgzMG2pF90kZ1ITfabp8w1ecZ8km4zq2zkeo0fj3JJLFiaNU"
+# FIX: API keys must never be hardcoded in source code, especially
+# in a public GitHub repo. Set these as environment variables in
+# Railway (Variables tab) with the exact names below, using your
+# NEW keys after revoking the old (leaked) ones.
+TOOBIT_API_KEY = os.getenv("TOOBIT_API_KEY")
 
-TOOBIT_SECRET_KEY = "9G8dpO7uAh0nKNzZCtSSrLdhKT5RGfcUYSHJBH7otsB0spGouOjR1HIGbHCK9vuZ"
+TOOBIT_SECRET_KEY = os.getenv("TOOBIT_SECRET_KEY")
