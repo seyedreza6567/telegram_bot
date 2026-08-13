@@ -1,8 +1,15 @@
+import time
 import requests
 import pandas as pd
 
 
 BASE_URL = "https://api.toobit.com"
+
+# Toobit's /quote/v1/klines endpoint caps "limit" at 1000 per request
+# (confirmed in their official docs: Default 1000, Max 1000).
+# To fetch more candles than that, we page backwards in time using
+# the "endTime" parameter and stitch the pages together.
+API_MAX_LIMIT = 1000
 
 
 # =========================================================
@@ -134,13 +141,14 @@ def get_filtered_futures_symbols():
 
 
 # =========================================================
-# Raw Klines
+# Single page of raw klines
 # =========================================================
 
-def _get_raw_klines(
-    symbol="BTC-SWAP-USDT",
-    interval="1h",
-    limit=200
+def _get_klines_page(
+    symbol,
+    interval,
+    limit,
+    end_time=None
 ):
 
     url = f"{BASE_URL}/quote/v1/klines"
@@ -148,8 +156,11 @@ def _get_raw_klines(
     params = {
         "symbol": symbol,
         "interval": interval,
-        "limit": limit
+        "limit": min(limit, API_MAX_LIMIT)
     }
+
+    if end_time is not None:
+        params["endTime"] = end_time
 
     try:
 
@@ -190,92 +201,164 @@ def _get_raw_klines(
             columns=columns
         )
 
-        numeric_columns = [
+        return df
+
+    except Exception as e:
+
+        print(
+            "ERROR _get_klines_page:",
+            e
+        )
+
+        return None
+
+
+# =========================================================
+# Raw Klines (with pagination)
+# =========================================================
+
+def _get_raw_klines(
+    symbol="BTC-SWAP-USDT",
+    interval="1h",
+    limit=200
+):
+
+    pages = []
+    remaining = limit
+    end_time = None
+    seen_earliest_open_time = None
+
+    # =====================================================
+    # PAGE BACKWARDS UNTIL WE HAVE ENOUGH DATA
+    # =====================================================
+
+    while remaining > 0:
+
+        page_request_size = min(remaining, API_MAX_LIMIT)
+
+        page = _get_klines_page(
+            symbol=symbol,
+            interval=interval,
+            limit=page_request_size,
+            end_time=end_time
+        )
+
+        if page is None or len(page) == 0:
+            break
+
+        earliest_open_time = int(page["open_time"].iloc[0])
+
+        # Stop if the exchange keeps returning the same page
+        # (no more historical data available).
+        if (
+            seen_earliest_open_time is not None
+            and
+            earliest_open_time >= seen_earliest_open_time
+        ):
+            break
+
+        seen_earliest_open_time = earliest_open_time
+
+        pages.append(page)
+
+        remaining -= len(page)
+
+        # Next page ends right before this page's earliest candle.
+        end_time = earliest_open_time - 1
+
+        # If we asked for a full page but got back fewer candles,
+        # we've hit the start of available history on the exchange.
+        if len(page) < page_request_size:
+            break
+
+        # Be gentle with the API between pages.
+        time.sleep(0.2)
+
+    if not pages:
+        return None
+
+    df = pd.concat(
+        pages,
+        ignore_index=True
+    )
+
+    numeric_columns = [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]
+
+    for col in numeric_columns:
+
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce"
+        )
+
+    df["open_time"] = pd.to_datetime(
+        df["open_time"],
+        unit="ms",
+        utc=True,
+        errors="coerce"
+    )
+
+    df["close_time"] = pd.to_datetime(
+        df["close_time"],
+        unit="ms",
+        utc=True,
+        errors="coerce"
+    )
+
+    df = df.dropna(
+        subset=[
+            "open_time",
             "open",
             "high",
             "low",
             "close",
             "volume"
         ]
+    )
 
-        for col in numeric_columns:
+    df = df.sort_values(
+        "open_time"
+    )
 
-            df[col] = pd.to_numeric(
-                df[col],
-                errors="coerce"
-            )
+    df = df.drop_duplicates(
+        subset="open_time",
+        keep="last"
+    )
 
-        df["open_time"] = pd.to_datetime(
-            df["open_time"],
-            unit="ms",
-            utc=True,
-            errors="coerce"
-        )
+    df = df.reset_index(
+        drop=True
+    )
 
-        df["close_time"] = pd.to_datetime(
-            df["close_time"],
-            unit="ms",
-            utc=True,
-            errors="coerce"
-        )
+    # =================================================
+    # فقط کندل‌های کاملاً بسته
+    # =================================================
 
-        df = df.dropna(
-            subset=[
-                "open_time",
-                "open",
-                "high",
-                "low",
-                "close",
-                "volume"
-            ]
-        )
+    now = pd.Timestamp.now(
+        tz="UTC"
+    )
 
-        df = df.sort_values(
-            "open_time"
-        )
+    df = df[
+        df["close_time"] <= now
+    ].copy()
 
-        df = df.drop_duplicates(
-            subset="open_time",
-            keep="last"
-        )
+    df = df.reset_index(
+        drop=True
+    )
 
-        df = df.reset_index(
-            drop=True
-        )
-
-        # =================================================
-        # فقط کندل‌های کاملاً بسته
-        # =================================================
-
-        now = pd.Timestamp.now(
-            tz="UTC"
-        )
-
-        df = df[
-            df["close_time"] <= now
-        ].copy()
-
-        df = df.reset_index(
-            drop=True
-        )
-
-        if len(df) == 0:
-            return None
-
-        return df.tail(
-            limit
-        ).reset_index(
-            drop=True
-        )
-
-    except Exception as e:
-
-        print(
-            "ERROR _get_raw_klines:",
-            e
-        )
-
+    if len(df) == 0:
         return None
+
+    return df.tail(
+        limit
+    ).reset_index(
+        drop=True
+    )
 
 
 # =========================================================
