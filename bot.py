@@ -86,6 +86,14 @@ async def start(
 
 # =========================================================
 # اسکن چندتایم‌فریمی بازار
+#
+# FIX: این تابع قبلاً یک منطق تصمیم‌گیری کاملاً جدا و
+# ناهماهنگ با signal_engine.py و backtest.py داشت
+# (رأی‌گیری ساده + میانگین Score + آستانه‌های متفاوت).
+# نتیجه‌اش این بود که بک‌تست هیچ ربطی به رفتار واقعی بات
+# نداشت. حالا این تابع مستقیماً از همون final_signal()
+# در signal_engine.py استفاده می‌کند - دقیقاً همان منطقی
+# که "🔥 سیگنال نهایی" و backtest.py استفاده می‌کنند.
 # =========================================================
 
 async def scan_market(
@@ -128,7 +136,7 @@ async def scan_market(
         final_results = []
 
         # =================================================
-        # بررسی هر ارز
+        # بررسی هر ارز با همان منطق final_signal
         # =================================================
 
         for symbol in symbols:
@@ -137,304 +145,68 @@ async def scan_market(
                 f"\n========== {symbol} =========="
             )
 
-            timeframe_results = {}
+            try:
 
-            long_count = 0
-            short_count = 0
+                result = final_signal(
+                    symbol
+                )
 
-            total_score = 0
-            valid_count = 0
+            except Exception as e:
 
-            last_price = "-"
-
-            # =================================================
-            # بررسی ۵ تایم‌فریم
-            # =================================================
-
-            for timeframe in SCAN_TIMEFRAMES:
-
-                try:
-
-                    df = get_klines(
-                        symbol=symbol,
-                        interval=timeframe,
-                        limit=250
-                    )
-
-                    if df is None or len(df) < 200:
-
-                        timeframe_results[timeframe] = {
-                            "signal": "NO TRADE",
-                            "score": 0,
-                            "confidence": 0
-                        }
-
-                        continue
-
-                    result = analyze(df)
-
-                    signal = result.get(
-                        "signal",
-                        "NO TRADE"
-                    )
-
-                    score = result.get(
-                        "score",
-                        0
-                    )
-
-                    confidence = result.get(
-                        "confidence",
-                        0
-                    )
-
-                    price = result.get(
-                        "price",
-                        "-"
-                    )
-
-                    atr = result.get(
-                        "atr",
-                        0
-                    )
-
-                    last_price = price
-
-                    timeframe_results[timeframe] = {
-                        "signal": signal,
-                        "score": score,
-                        "confidence": confidence,
-                        "price": price,
-                        "atr": atr,
-                        "stop_loss": result.get(
-                            "stop_loss"
-                        ),
-                        "take_profit": result.get(
-                            "take_profit"
-                        )
-                    }
-
-                    valid_count += 1
-
-                    total_score += score
-
-                    if signal == "LONG":
-
-                        long_count += 1
-
-                    elif signal == "SHORT":
-
-                        short_count += 1
-
-                except Exception as e:
-
-                    print(
-                        f"TIMEFRAME ERROR "
-                        f"{symbol} {timeframe}: {e}"
-                    )
-
-                    timeframe_results[timeframe] = {
-                        "signal": "NO TRADE",
-                        "score": 0,
-                        "confidence": 0
-                    }
-
-            # =================================================
-            # بررسی داده
-            # =================================================
-
-            if valid_count == 0:
+                print(
+                    f"SIGNAL ERROR {symbol}: {e}"
+                )
 
                 continue
 
-            # =================================================
-            # میانگین Score
-            # =================================================
-
-            average_score = (
-                total_score / valid_count
+            signal = result.get(
+                "signal",
+                "NO TRADE"
             )
 
-            # =================================================
-            # تعیین جهت
-            # =================================================
-
-            if long_count > short_count:
-
-                final_direction = "LONG"
-                confirmation = long_count
-
-            elif short_count > long_count:
-
-                final_direction = "SHORT"
-                confirmation = short_count
-
-            else:
-
-                final_direction = "NO TRADE"
-                confirmation = 0
-
-            # =================================================
-            # فیلتر ۱
-            # حداقل ۴ تایم‌فریم
-            # =================================================
-
-            if confirmation < 4:
-
-                continue
-
-            # =================================================
-            # فیلتر ۲
-            # میانگین امتیاز حداقل ۶.۵
-            # =================================================
-
-            if average_score < 6.5:
-
-                continue
-
-            # =================================================
-            # فیلتر ۳
-            # تایم‌فریم روزانه نباید مخالف باشد
-            # =================================================
-
-            daily_signal = (
-                timeframe_results
-                .get("1d", {})
-                .get("signal", "NO TRADE")
-            )
-
-            if final_direction == "LONG":
-
-                if daily_signal == "SHORT":
-
-                    continue
-
-            elif final_direction == "SHORT":
-
-                if daily_signal == "LONG":
-
-                    continue
-
-            # =================================================
-            # قیمت ورود
-            # =================================================
-
-            entry_price = None
-
-            for timeframe in [
-                "1h",
-                "2h",
-                "3h",
-                "4h",
-                "1d"
+            if signal not in [
+                "LONG",
+                "SHORT"
             ]:
 
-                data = timeframe_results.get(
-                    timeframe,
-                    {}
-                )
-
-                price = data.get("price")
-
-                if price is not None:
-
-                    try:
-
-                        entry_price = float(price)
-
-                        break
-
-                    except Exception:
-
-                        pass
-
-            if entry_price is None:
-
                 continue
 
-            # =================================================
-            # محاسبه ATR میانگین
-            # =================================================
-
-            atr_values = []
-
-            for timeframe in [
-                "1h",
-                "2h",
-                "3h",
-                "4h"
-            ]:
-
-                atr = (
-                    timeframe_results
-                    .get(timeframe, {})
-                    .get("atr")
-                )
-
-                if atr:
-
-                    try:
-
-                        atr_values.append(
-                            float(atr)
-                        )
-
-                    except Exception:
-
-                        pass
-
-            if not atr_values:
-
-                continue
-
-            average_atr = (
-                sum(atr_values)
-                / len(atr_values)
+            risk = result.get(
+                "risk",
+                {}
             )
 
-            # =================================================
-            # Entry / Stop Loss / TP
-            # =================================================
+            if not risk.get(
+                "valid"
+            ):
 
-            entry = entry_price
+                continue
 
-            if final_direction == "LONG":
+            entry = risk.get(
+                "entry_price"
+            )
 
-                stop_loss = (
-                    entry
-                    - average_atr * 2
-                )
+            stop_loss = risk.get(
+                "stop_loss"
+            )
 
-                tp1 = (
-                    entry
-                    + average_atr * 2
-                )
+            tp1 = risk.get(
+                "tp1"
+            )
 
-                tp2 = (
-                    entry
-                    + average_atr * 4
-                )
+            tp2 = risk.get(
+                "take_profit"
+            )
 
-            else:
+            if (
+                entry is None
+                or
+                stop_loss is None
+                or
+                tp2 is None
+            ):
 
-                stop_loss = (
-                    entry
-                    + average_atr * 2
-                )
-
-                tp1 = (
-                    entry
-                    - average_atr * 2
-                )
-
-                tp2 = (
-                    entry
-                    - average_atr * 4
-                )
-
-            # =================================================
-            # Risk / Reward
-            # =================================================
+                continue
 
             risk_distance = abs(
                 entry - stop_loss
@@ -453,58 +225,59 @@ async def scan_market(
                 / risk_distance
             )
 
-            # =================================================
-            # فیلتر ۴
-            # حداقل Risk/Reward = 1:2
-            # =================================================
-
-            if risk_reward < 2:
-
-                continue
-
-            # =================================================
-            # ذخیره فرصت
-            # =================================================
-
-            confirmation_percent = (
-                confirmation
-                / len(SCAN_TIMEFRAMES)
-            ) * 100
-
             final_results.append({
 
                 "symbol": symbol,
 
-                "signal": final_direction,
+                "signal": signal,
 
-                "confirmation": confirmation,
+                "quality_margin":
+                    result.get(
+                        "quality_margin",
+                        0
+                    ),
 
-                "confirmation_percent":
-                    confirmation_percent,
+                "long_quality":
+                    result.get(
+                        "long_quality",
+                        0
+                    ),
 
-                "average_score":
-                    average_score,
+                "short_quality":
+                    result.get(
+                        "short_quality",
+                        0
+                    ),
 
-                "price":
-                    last_price,
+                "lower_long_count":
+                    result.get(
+                        "lower_long_count",
+                        0
+                    ),
 
-                "entry":
-                    entry,
+                "lower_short_count":
+                    result.get(
+                        "lower_short_count",
+                        0
+                    ),
 
-                "stop_loss":
-                    stop_loss,
+                "price": entry,
 
-                "tp1":
-                    tp1,
+                "entry": entry,
 
-                "tp2":
-                    tp2,
+                "stop_loss": stop_loss,
 
-                "risk_reward":
-                    risk_reward,
+                "tp1": tp1,
+
+                "tp2": tp2,
+
+                "risk_reward": risk_reward,
 
                 "timeframes":
-                    timeframe_results
+                    result.get(
+                        "timeframes",
+                        {}
+                    )
             })
 
         # =================================================
@@ -515,25 +288,19 @@ async def scan_market(
 
             await update.message.reply_text(
                 "⚪ در حال حاضر هیچ فرصت قوی‌ای "
-                "با فیلتر نهایی پیدا نشد.\n\n"
-                "شرایط لازم:\n"
-                "✅ حداقل 4/5 تأیید\n"
-                "✅ میانگین Score حداقل 6.5\n"
-                "✅ عدم مخالفت 1D\n"
-                "✅ Risk/Reward حداقل 1:2\n\n"
+                "با فیلتر نهایی (signal_engine) پیدا نشد.\n\n"
                 "⚠️ سفارش واقعی ارسال نمی‌شود."
             )
 
             return
 
         # =================================================
-        # مرتب‌سازی
+        # مرتب‌سازی بر اساس فاصله کیفیت long/short و ریسک‌ریوارد
         # =================================================
 
         final_results.sort(
             key=lambda x: (
-                x["confirmation"],
-                x["average_score"],
+                x["quality_margin"],
                 x["risk_reward"]
             ),
             reverse=True
@@ -571,22 +338,25 @@ async def scan_market(
 
                 emoji = "🟢"
 
+                quality = item[
+                    "long_quality"
+                ]
+
+                lower_count = item[
+                    "lower_long_count"
+                ]
+
             else:
 
                 emoji = "🔴"
 
-            confirmation = item[
-                "confirmation"
-            ]
+                quality = item[
+                    "short_quality"
+                ]
 
-            confirmation_percent = int(
-                item["confirmation_percent"]
-            )
-
-            average_score = round(
-                item["average_score"],
-                1
-            )
+                lower_count = item[
+                    "lower_short_count"
+                ]
 
             entry = item["entry"]
 
@@ -603,11 +373,10 @@ async def scan_market(
 
             message += (
                 f"\n{emoji} {name} → {signal}\n"
-                f"⭐ میانگین Score: "
-                f"{average_score}\n"
-                f"🎯 تأیید: "
-                f"{confirmation}/5 "
-                f"({confirmation_percent}%)\n"
+                f"⭐ کیفیت: "
+                f"{round(quality * 100, 1)}%\n"
+                f"🎯 تأیید تایم‌فریم پایین: "
+                f"{lower_count}\n"
                 f"💰 قیمت: "
                 f"{item['price']}\n"
                 f"📍 Entry: "
@@ -658,7 +427,7 @@ async def scan_market(
 
         message += (
             "\n━━━━━━━━━━━━━━\n"
-            "🛡️ فیلتر نهایی فعال است.\n"
+            "🛡️ فیلتر نهایی فعال است (همان منطق signal_engine.py).\n"
             "⚠️ این نتایج صرفاً تحلیلی هستند.\n"
             "⚠️ سفارش واقعی ارسال نمی‌شود."
         )
