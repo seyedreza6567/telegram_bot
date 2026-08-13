@@ -71,13 +71,13 @@ COST_R = 0.05
 
 MAX_SCORE = 15.0
 
-MIN_QUALITY = 0.67
+MIN_QUALITY = 0.62
 
 MIN_LOWER_CONFIRMATIONS = 2
 
-MIN_DIRECTIONAL_RATIO = 0.60
+MIN_DIRECTIONAL_RATIO = 0.55
 
-MIN_SCORE_MARGIN = 0.08
+MIN_SCORE_MARGIN = 0.05
 
 
 # =========================================================
