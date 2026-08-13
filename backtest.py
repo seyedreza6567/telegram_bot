@@ -1,3 +1,5 @@
+import time
+
 import pandas as pd
 import numpy as np
 
@@ -88,6 +90,19 @@ MIN_LOWER_CONFIRMATIONS = 2
 MIN_DIRECTIONAL_RATIO = 0.60
 
 MIN_SCORE_MARGIN = 0.08
+
+# =========================================================
+# FIX: pause between heavy data pulls (each symbol needs 5
+# timeframes, and 3h alone needs ~10 paginated requests at
+# CANDLE_LIMIT=3000). Without spacing these out, backtesting
+# all 15 symbols back-to-back was hitting Toobit's rate limit
+# / dropping the connection, which is why some symbols came
+# back as "NO TRADES" and results changed between runs.
+# =========================================================
+
+TIMEFRAME_SLEEP_SECONDS = 1.0
+
+SYMBOL_SLEEP_SECONDS = 2.0
 
 
 # =========================================================
@@ -904,6 +919,10 @@ def load_symbol_data(symbol):
 
         datasets[timeframe] = df
 
+        time.sleep(
+            TIMEFRAME_SLEEP_SECONDS
+        )
+
     return datasets
 
 
@@ -1310,6 +1329,10 @@ def main():
                 symbol,
                 e
             )
+
+        time.sleep(
+            SYMBOL_SLEEP_SECONDS
+        )
 
     if not results:
 
