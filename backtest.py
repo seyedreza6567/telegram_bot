@@ -169,9 +169,18 @@ def analyze_at_time(
 
         # -------------------------------------------------
         # HISTORICAL CUT
+        # FIX: use close_time (candle actually closed) instead
+        # of open_time / timestamp, to avoid look-ahead bias
+        # from candles that have opened but not yet closed.
         # -------------------------------------------------
 
-        if "timestamp" in df.columns:
+        if "close_time" in df.columns:
+
+            historical = df[
+                df["close_time"] <= current_time
+            ].copy()
+
+        elif "timestamp" in df.columns:
 
             historical = df[
                 df["timestamp"] < current_time
@@ -608,6 +617,14 @@ def build_final_signal(results):
 
 # =========================================================
 # SIMULATE TRADE
+# FIX: previously, if TP1 was hit but neither break-even
+# nor TP2 was reached before MAX_HOLD_CANDLES, the trade
+# was scored as a flat "TIMEOUT" with r = 0.0. This erased
+# the partial profit that was already locked in at TP1 and
+# systematically understated results. Now TIMEOUT trades are
+# marked-to-market against the last available close price,
+# respecting whichever stage (pre-TP1 or post-TP1/BE) the
+# trade was in when time ran out.
 # =========================================================
 
 def simulate_trade(
@@ -633,31 +650,15 @@ def simulate_trade(
 
     if signal == "LONG":
 
-        sl = entry - (
-            atr * SL_ATR
-        )
-
-        tp1 = entry + (
-            atr * TP1_ATR
-        )
-
-        tp2 = entry + (
-            atr * TP2_ATR
-        )
+        sl = entry - (atr * SL_ATR)
+        tp1 = entry + (atr * TP1_ATR)
+        tp2 = entry + (atr * TP2_ATR)
 
     elif signal == "SHORT":
 
-        sl = entry + (
-            atr * SL_ATR
-        )
-
-        tp1 = entry - (
-            atr * TP1_ATR
-        )
-
-        tp2 = entry - (
-            atr * TP2_ATR
-        )
+        sl = entry + (atr * SL_ATR)
+        tp1 = entry - (atr * TP1_ATR)
+        tp2 = entry - (atr * TP2_ATR)
 
     else:
 
@@ -667,26 +668,22 @@ def simulate_trade(
 
     last_index = min(
         len(df),
-        entry_index +
-        MAX_HOLD_CANDLES +
-        1
+        entry_index + MAX_HOLD_CANDLES + 1
     )
 
-    for j in range(
-        entry_index,
-        last_index
-    ):
+    last_close = entry
 
-        high = safe_float(
-            df.iloc[j]["high"]
-        )
+    for j in range(entry_index, last_index):
 
-        low = safe_float(
-            df.iloc[j]["low"]
-        )
+        high = safe_float(df.iloc[j]["high"])
+        low = safe_float(df.iloc[j]["low"])
+        close = safe_float(df.iloc[j]["close"])
 
         if high is None or low is None:
             continue
+
+        if close is not None:
+            last_close = close
 
         # =================================================
         # LONG
@@ -697,25 +694,14 @@ def simulate_trade(
             if not tp1_hit:
 
                 hit_sl = low <= sl
-
                 hit_tp1 = high >= tp1
-
-                if hit_sl and hit_tp1:
-
-                    return {
-                        "result": "SL",
-                        "r": -1.0 - COST_R,
-                        "bars":
-                            j - entry_index + 1
-                    }
 
                 if hit_sl:
 
                     return {
                         "result": "SL",
                         "r": -1.0 - COST_R,
-                        "bars":
-                            j - entry_index + 1
+                        "bars": j - entry_index + 1
                     }
 
                 if hit_tp1:
@@ -727,8 +713,7 @@ def simulate_trade(
                         return {
                             "result": "TP2",
                             "r": 1.5 - COST_R,
-                            "bars":
-                                j - entry_index + 1
+                            "bars": j - entry_index + 1
                         }
 
                     continue
@@ -736,25 +721,14 @@ def simulate_trade(
             else:
 
                 hit_be = low <= entry
-
                 hit_tp2 = high >= tp2
-
-                if hit_be and hit_tp2:
-
-                    return {
-                        "result": "TP1",
-                        "r": 0.5 - COST_R,
-                        "bars":
-                            j - entry_index + 1
-                    }
 
                 if hit_be:
 
                     return {
                         "result": "TP1",
                         "r": 0.5 - COST_R,
-                        "bars":
-                            j - entry_index + 1
+                        "bars": j - entry_index + 1
                     }
 
                 if hit_tp2:
@@ -762,8 +736,7 @@ def simulate_trade(
                     return {
                         "result": "TP2",
                         "r": 1.5 - COST_R,
-                        "bars":
-                            j - entry_index + 1
+                        "bars": j - entry_index + 1
                     }
 
         # =================================================
@@ -775,25 +748,14 @@ def simulate_trade(
             if not tp1_hit:
 
                 hit_sl = high >= sl
-
                 hit_tp1 = low <= tp1
-
-                if hit_sl and hit_tp1:
-
-                    return {
-                        "result": "SL",
-                        "r": -1.0 - COST_R,
-                        "bars":
-                            j - entry_index + 1
-                    }
 
                 if hit_sl:
 
                     return {
                         "result": "SL",
                         "r": -1.0 - COST_R,
-                        "bars":
-                            j - entry_index + 1
+                        "bars": j - entry_index + 1
                     }
 
                 if hit_tp1:
@@ -805,8 +767,7 @@ def simulate_trade(
                         return {
                             "result": "TP2",
                             "r": 1.5 - COST_R,
-                            "bars":
-                                j - entry_index + 1
+                            "bars": j - entry_index + 1
                         }
 
                     continue
@@ -814,25 +775,14 @@ def simulate_trade(
             else:
 
                 hit_be = high >= entry
-
                 hit_tp2 = low <= tp2
-
-                if hit_be and hit_tp2:
-
-                    return {
-                        "result": "TP1",
-                        "r": 0.5 - COST_R,
-                        "bars":
-                            j - entry_index + 1
-                    }
 
                 if hit_be:
 
                     return {
                         "result": "TP1",
                         "r": 0.5 - COST_R,
-                        "bars":
-                            j - entry_index + 1
+                        "bars": j - entry_index + 1
                     }
 
                 if hit_tp2:
@@ -840,18 +790,50 @@ def simulate_trade(
                     return {
                         "result": "TP2",
                         "r": 1.5 - COST_R,
-                        "bars":
-                            j - entry_index + 1
+                        "bars": j - entry_index + 1
                     }
 
-    return {
-        "result": "TIMEOUT",
-        "r": 0.0,
-        "bars": max(
-            1,
-            last_index - entry_index
-        )
-    }
+    # =====================================================
+    # TIME RAN OUT -> MARK TO MARKET
+    # =====================================================
+
+    bars = max(1, last_index - entry_index)
+
+    if not tp1_hit:
+
+        # No partial profit was locked in yet.
+        # Mark the open trade to the last known close,
+        # clipped between the SL and TP1 distance.
+        if signal == "LONG":
+            r = (last_close - entry) / atr
+        else:
+            r = (entry - last_close) / atr
+
+        r = max(-1.0, min(r, TP1_ATR))
+
+        return {
+            "result": "TIMEOUT",
+            "r": r - COST_R,
+            "bars": bars
+        }
+
+    else:
+
+        # TP1 already locked in 0.5R. The remaining runner
+        # is stopped at break-even, so it can only add value
+        # between 0 and 1.0 extra R (from entry to tp2).
+        if signal == "LONG":
+            progress = (last_close - entry) / (tp2 - entry)
+        else:
+            progress = (entry - last_close) / (entry - tp2)
+
+        progress = max(0.0, min(progress, 1.0))
+
+        return {
+            "result": "TIMEOUT",
+            "r": 0.5 + progress - COST_R,
+            "bars": bars
+        }
 
 
 # =========================================================
