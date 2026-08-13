@@ -4,15 +4,20 @@ from risk_manager import calculate_risk
 
 # =========================================================
 # SETTINGS
+# FIX: loosened from 0.67/0.60/0.08 so altcoins (which trend
+# less cleanly than BTC) can actually clear the bar sometimes.
+# Previously only BTC ever produced a signal across all 15
+# symbols with the stricter values. Keep these identical to
+# backtest.py whenever either file changes.
 # =========================================================
 
-MIN_QUALITY = 0.67
+MIN_QUALITY = 0.60
 
 MIN_LOWER_CONFIRMATIONS = 2
 
-MIN_DIRECTIONAL_RATIO = 0.60
+MIN_DIRECTIONAL_RATIO = 0.55
 
-MIN_SCORE_MARGIN = 0.08
+MIN_SCORE_MARGIN = 0.05
 
 
 # =========================================================
