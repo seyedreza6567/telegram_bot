@@ -71,13 +71,23 @@ COST_R = 0.05
 
 MAX_SCORE = 15.0
 
-MIN_QUALITY = 0.62
+# =========================================================
+# FIX: these four thresholds must always match
+# signal_engine.py exactly (MIN_QUALITY, MIN_LOWER_CONFIRMATIONS,
+# MIN_DIRECTIONAL_RATIO, MIN_SCORE_MARGIN). Previously this file
+# used looser values (0.62 / 0.55 / 0.05) than the live bot's
+# signal_engine.py (0.67 / 0.60 / 0.08), so the backtest accepted
+# trades the live bot never would have taken. Keep these four
+# lines identical to signal_engine.py whenever either file changes.
+# =========================================================
+
+MIN_QUALITY = 0.67
 
 MIN_LOWER_CONFIRMATIONS = 2
 
-MIN_DIRECTIONAL_RATIO = 0.55
+MIN_DIRECTIONAL_RATIO = 0.60
 
-MIN_SCORE_MARGIN = 0.05
+MIN_SCORE_MARGIN = 0.08
 
 
 # =========================================================
