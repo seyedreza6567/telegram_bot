@@ -11,6 +11,22 @@ BASE_URL = "https://api.toobit.com"
 # the "endTime" parameter and stitch the pages together.
 API_MAX_LIMIT = 1000
 
+# =========================================================
+# FIX: retry settings.
+# Backtesting many symbols x many timeframes means hundreds of
+# requests in a short window. Without retries, a single dropped
+# connection or rate-limit response ("WebSocket connection failed",
+# empty page) silently turned into "NO TRADES" for that symbol,
+# which is why results changed every run. Now a failed page is
+# retried a few times with an increasing wait before giving up.
+# =========================================================
+
+MAX_RETRIES = 4
+
+RETRY_BACKOFF_SECONDS = 1.5
+
+PAGE_SLEEP_SECONDS = 0.35
+
 
 # =========================================================
 # Futures Symbols
@@ -141,7 +157,7 @@ def get_filtered_futures_symbols():
 
 
 # =========================================================
-# Single page of raw klines
+# Single page of raw klines (with retry)
 # =========================================================
 
 def _get_klines_page(
@@ -162,55 +178,76 @@ def _get_klines_page(
     if end_time is not None:
         params["endTime"] = end_time
 
-    try:
+    last_error = None
 
-        r = requests.get(
-            url,
-            params=params,
-            timeout=15
-        )
+    for attempt in range(1, MAX_RETRIES + 1):
 
-        r.raise_for_status()
+        try:
 
-        data = r.json()
+            r = requests.get(
+                url,
+                params=params,
+                timeout=15
+            )
 
-        if (
-            not isinstance(data, list)
-            or
-            len(data) == 0
-        ):
+            r.raise_for_status()
 
-            return None
+            data = r.json()
 
-        columns = [
-            "open_time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time",
-            "quote_volume",
-            "trades",
-            "taker_buy_volume",
-            "taker_buy_quote_volume"
-        ]
+            if (
+                not isinstance(data, list)
+                or
+                len(data) == 0
+            ):
 
-        df = pd.DataFrame(
-            data,
-            columns=columns
-        )
+                return None
 
-        return df
+            columns = [
+                "open_time",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "close_time",
+                "quote_volume",
+                "trades",
+                "taker_buy_volume",
+                "taker_buy_quote_volume"
+            ]
 
-    except Exception as e:
+            df = pd.DataFrame(
+                data,
+                columns=columns
+            )
 
-        print(
-            "ERROR _get_klines_page:",
-            e
-        )
+            return df
 
-        return None
+        except Exception as e:
+
+            last_error = e
+
+            if attempt < MAX_RETRIES:
+
+                wait = RETRY_BACKOFF_SECONDS * attempt
+
+                print(
+                    f"WARN _get_klines_page "
+                    f"({symbol} {interval}) attempt "
+                    f"{attempt}/{MAX_RETRIES} failed: {e} "
+                    f"-> retrying in {wait:.1f}s"
+                )
+
+                time.sleep(wait)
+
+    print(
+        "ERROR _get_klines_page (gave up):",
+        symbol,
+        interval,
+        last_error
+    )
+
+    return None
 
 
 # =========================================================
@@ -272,7 +309,7 @@ def _get_raw_klines(
             break
 
         # Be gentle with the API between pages.
-        time.sleep(0.2)
+        time.sleep(PAGE_SLEEP_SECONDS)
 
     if not pages:
         return None
