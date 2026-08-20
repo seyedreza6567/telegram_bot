@@ -57,53 +57,67 @@ TIMEFRAMES = {
     },
 }
 
-CANDLE_LIMIT = 3000
 
+# =========================================================
+# DATA
+# =========================================================
+
+CANDLE_LIMIT = 3000
 MIN_ANALYSIS_CANDLES = 250
 
+
+# =========================================================
+# RISK
+# =========================================================
+
 SL_ATR = 2.0
-
 TP1_ATR = 2.0
-
 TP2_ATR = 4.0
 
 MAX_HOLD_CANDLES = 100
 
 COST_R = 0.05
 
-MAX_SCORE = 15.0
 
 # =========================================================
-# FIX: these four thresholds must always match
-# signal_engine.py exactly (MIN_QUALITY, MIN_LOWER_CONFIRMATIONS,
-# MIN_DIRECTIONAL_RATIO, MIN_SCORE_MARGIN). Loosened slightly
-# from 0.67/0.60/0.08 so altcoins (which trend less cleanly than
-# BTC) can actually clear the bar sometimes - previously only
-# BTC ever produced a signal across all 15 symbols. Keep these
-# four lines identical to signal_engine.py whenever either
-# file changes.
+# SIGNAL FILTERS
+#
+# IMPORTANT:
+# We do NOT require 1D + 4H + 2 lower TFs anymore.
+#
+# The previous rule was too restrictive:
+#
+#     1D same direction
+#     4H same direction
+#     2 of 1H/2H/3H same direction
+#
+# That effectively required almost the entire market
+# structure to agree before entering.
+#
+# New rule:
+#   - at least 3 valid directional timeframes
+#   - higher timeframe confirmation is still required
+#   - weighted direction must be >= 55%
+#   - quality advantage must exist
 # =========================================================
 
 MIN_QUALITY = 0.60
-
-MIN_LOWER_CONFIRMATIONS = 2
 
 MIN_DIRECTIONAL_RATIO = 0.55
 
 MIN_SCORE_MARGIN = 0.05
 
+MIN_VALID_TIMEFRAMES = 3
+
+REQUIRE_HIGHER_TIMEFRAME_CONFIRMATION = True
+
+
 # =========================================================
-# FIX: pause between heavy data pulls (each symbol needs 5
-# timeframes, and 3h alone needs ~10 paginated requests at
-# CANDLE_LIMIT=3000). Without spacing these out, backtesting
-# all 15 symbols back-to-back was hitting Toobit's rate limit
-# / dropping the connection, which is why some symbols came
-# back as "NO TRADES" and results changed between runs.
+# API DELAYS
 # =========================================================
 
-TIMEFRAME_SLEEP_SECONDS = 1.0
-
-SYMBOL_SLEEP_SECONDS = 2.0
+TIMEFRAME_SLEEP_SECONDS = 0.7
+SYMBOL_SLEEP_SECONDS = 1.5
 
 
 # =========================================================
@@ -159,7 +173,88 @@ def prepare_dataframe(df):
 
 
 # =========================================================
-# BUILD MULTI-TIMEFRAME ANALYSIS
+# HISTORICAL DATA
+# =========================================================
+
+def get_historical_data(
+    df,
+    current_time
+):
+
+    if df is None:
+        return None
+
+    # -----------------------------------------------------
+    # IMPORTANT:
+    # current_time is the OPEN time of the current 1H candle.
+    # Therefore only candles that CLOSED before this moment
+    # are allowed for analysis.
+    # -----------------------------------------------------
+
+    if "close_time" in df.columns:
+
+        historical = df[
+            df["close_time"] <= current_time
+        ].copy()
+
+    elif "timestamp" in df.columns:
+
+        historical = df[
+            df["timestamp"] < current_time
+        ].copy()
+
+    elif "time" in df.columns:
+
+        historical = df[
+            df["time"] < current_time
+        ].copy()
+
+    elif "open_time" in df.columns:
+
+        historical = df[
+            df["open_time"] < current_time
+        ].copy()
+
+    else:
+
+        historical = df.copy()
+
+    return historical
+
+
+# =========================================================
+# EMPTY TIMEFRAME RESULT
+# =========================================================
+
+def empty_result(
+    timeframe,
+    weight,
+    reason
+):
+
+    return {
+        "signal": "NO TRADE",
+        "score": 0.0,
+        "confidence": 0.0,
+
+        "long_score": 0.0,
+        "short_score": 0.0,
+
+        "quality": 0.0,
+        "score_ratio": 0.0,
+
+        "weight": weight,
+        "timeframe": timeframe,
+
+        "price": None,
+        "atr": None,
+
+        "reason": reason
+    }
+
+
+# =========================================================
+# ANALYZE AT HISTORICAL TIME
 # =========================================================
 
 def analyze_at_time(
@@ -171,78 +266,44 @@ def analyze_at_time(
 
     for timeframe, settings in TIMEFRAMES.items():
 
+        weight = settings["weight"]
+
         df = datasets.get(
             timeframe
         )
 
-        weight = settings["weight"]
-
         if df is None:
 
-            results[timeframe] = {
-                "signal": "NO TRADE",
-                "score": 0,
-                "confidence": 0,
-                "long_score": 0,
-                "short_score": 0,
-                "quality": 0,
-                "weight": weight,
-                "timeframe": timeframe,
-                "reason": "داده موجود نیست"
-            }
+            results[timeframe] = empty_result(
+                timeframe,
+                weight,
+                "داده موجود نیست"
+            )
 
             continue
 
-        # -------------------------------------------------
-        # HISTORICAL CUT
-        # FIX: use close_time (candle actually closed) instead
-        # of open_time / timestamp, to avoid look-ahead bias
-        # from candles that have opened but not yet closed.
-        # -------------------------------------------------
+        historical = get_historical_data(
+            df,
+            current_time
+        )
 
-        if "close_time" in df.columns:
+        if historical is None:
 
-            historical = df[
-                df["close_time"] <= current_time
-            ].copy()
+            results[timeframe] = empty_result(
+                timeframe,
+                weight,
+                "داده تاریخی موجود نیست"
+            )
 
-        elif "timestamp" in df.columns:
-
-            historical = df[
-                df["timestamp"] < current_time
-            ].copy()
-
-        elif "time" in df.columns:
-
-            historical = df[
-                df["time"] < current_time
-            ].copy()
-
-        elif "open_time" in df.columns:
-
-            historical = df[
-                df["open_time"] < current_time
-            ].copy()
-
-        else:
-
-            # If scanner does not expose timestamps,
-            # caller must provide already aligned data.
-            historical = df.copy()
+            continue
 
         if len(historical) < MIN_ANALYSIS_CANDLES:
 
-            results[timeframe] = {
-                "signal": "NO TRADE",
-                "score": 0,
-                "confidence": 0,
-                "long_score": 0,
-                "short_score": 0,
-                "quality": 0,
-                "weight": weight,
-                "timeframe": timeframe,
-                "reason": "داده تاریخی کافی نیست"
-            }
+            results[timeframe] = empty_result(
+                timeframe,
+                weight,
+                f"داده کافی نیست: {len(historical)}"
+            )
 
             continue
 
@@ -254,17 +315,24 @@ def analyze_at_time(
 
         except Exception as e:
 
-            results[timeframe] = {
-                "signal": "NO TRADE",
-                "score": 0,
-                "confidence": 0,
-                "long_score": 0,
-                "short_score": 0,
-                "quality": 0,
-                "weight": weight,
-                "timeframe": timeframe,
-                "reason": f"خطای تحلیل: {e}"
-            }
+            results[timeframe] = empty_result(
+                timeframe,
+                weight,
+                f"خطای تحلیل: {e}"
+            )
+
+            continue
+
+        if not isinstance(
+            result,
+            dict
+        ):
+
+            results[timeframe] = empty_result(
+                timeframe,
+                weight,
+                "خروجی تحلیل نامعتبر"
+            )
 
             continue
 
@@ -284,7 +352,7 @@ def analyze_at_time(
             0.0,
             min(
                 score,
-                MAX_SCORE
+                15.0
             )
         )
 
@@ -293,19 +361,16 @@ def analyze_at_time(
             "NO TRADE"
         )
 
-        if signal in [
+        if signal not in [
             "LONG",
             "SHORT"
         ]:
 
-            quality = (
-                score /
-                MAX_SCORE
-            )
+            quality = 0.0
 
         else:
 
-            quality = 0.0
+            quality = score / 15.0
 
         result["score"] = score
 
@@ -323,10 +388,13 @@ def analyze_at_time(
 
 
 # =========================================================
-# FINAL DECISION
+# FINAL SIGNAL
 # =========================================================
 
-def build_final_signal(results):
+def build_final_signal(
+    results,
+    diagnostic=False
+):
 
     long_weight = 0.0
     short_weight = 0.0
@@ -338,6 +406,8 @@ def build_final_signal(results):
 
     long_count = 0
     short_count = 0
+
+    valid_count = 0
 
     # =====================================================
     # COLLECT
@@ -355,20 +425,14 @@ def build_final_signal(results):
                 "weight",
                 0
             )
-        )
+        ) or 0.0
 
         quality = safe_float(
             result.get(
                 "quality",
                 0
             )
-        )
-
-        if weight is None:
-            weight = 0
-
-        if quality is None:
-            quality = 0
+        ) or 0.0
 
         if signal not in [
             "LONG",
@@ -376,6 +440,8 @@ def build_final_signal(results):
         ]:
 
             continue
+
+        valid_count += 1
 
         total_valid_weight += weight
 
@@ -390,7 +456,7 @@ def build_final_signal(results):
                 weight
             )
 
-        elif signal == "SHORT":
+        else:
 
             short_count += 1
 
@@ -411,7 +477,7 @@ def build_final_signal(results):
                 "weight",
                 0
             )
-        ) or 0
+        ) or 0.0
         for result in results.values()
     )
 
@@ -484,60 +550,110 @@ def build_final_signal(results):
             "quality",
             0
         )
-    ) or 0
+    ) or 0.0
 
     four_hour_quality = safe_float(
         four_hour.get(
             "quality",
             0
         )
-    ) or 0
+    ) or 0.0
 
     # =====================================================
-    # LOWER TIMEFRAME CONFIRMATION
+    # LONG
     # =====================================================
 
-    lower_long_count = 0
-    lower_short_count = 0
+    long_higher_ok = (
 
-    for timeframe in [
-        "1h",
-        "2h",
-        "3h"
-    ]:
+        daily_signal == "LONG"
 
-        result = results.get(
-            timeframe,
-            {}
-        )
+        and
 
-        signal = result.get(
-            "signal",
-            "NO TRADE"
-        )
+        four_hour_signal == "LONG"
 
-        quality = safe_float(
-            result.get(
-                "quality",
-                0
-            )
-        ) or 0
+        and
 
-        if (
-            signal == "LONG"
-            and
-            quality >= MIN_QUALITY
-        ):
+        daily_quality >= MIN_QUALITY
 
-            lower_long_count += 1
+        and
 
-        elif (
-            signal == "SHORT"
-            and
-            quality >= MIN_QUALITY
-        ):
+        four_hour_quality >= MIN_QUALITY
+    )
 
-            lower_short_count += 1
+    # =====================================================
+    # SHORT
+    # =====================================================
+
+    short_higher_ok = (
+
+        daily_signal == "SHORT"
+
+        and
+
+        four_hour_signal == "SHORT"
+
+        and
+
+        daily_quality >= MIN_QUALITY
+
+        and
+
+        four_hour_quality >= MIN_QUALITY
+    )
+
+    # =====================================================
+    # DIRECTIONAL CONFIRMATION
+    # =====================================================
+
+    long_direction_ok = (
+
+        long_count >= 3
+
+        and
+
+        long_ratio >= MIN_DIRECTIONAL_RATIO
+
+        and
+
+        long_weight > short_weight
+    )
+
+    short_direction_ok = (
+
+        short_count >= 3
+
+        and
+
+        short_ratio >= MIN_DIRECTIONAL_RATIO
+
+        and
+
+        short_weight > long_weight
+    )
+
+    # =====================================================
+    # QUALITY
+    # =====================================================
+
+    long_quality_ok = (
+
+        long_quality_ratio >
+        short_quality_ratio
+
+        and
+
+        quality_margin >= MIN_SCORE_MARGIN
+    )
+
+    short_quality_ok = (
+
+        short_quality_ratio >
+        long_quality_ratio
+
+        and
+
+        quality_margin >= MIN_SCORE_MARGIN
+    )
 
     # =====================================================
     # FINAL
@@ -545,112 +661,197 @@ def build_final_signal(results):
 
     final = "NO TRADE"
 
-    # -----------------------------------------------------
-    # LONG
-    # -----------------------------------------------------
-
     if (
-        daily_signal == "LONG"
+        valid_count >= MIN_VALID_TIMEFRAMES
         and
-        four_hour_signal == "LONG"
+        long_direction_ok
         and
-        daily_quality >= MIN_QUALITY
+        long_quality_ok
         and
-        four_hour_quality >= MIN_QUALITY
-        and
-        lower_long_count >= MIN_LOWER_CONFIRMATIONS
-        and
-        long_ratio >= MIN_DIRECTIONAL_RATIO
-        and
-        long_weight > short_weight
-        and
-        long_quality_ratio > short_quality_ratio
-        and
-        quality_margin >= MIN_SCORE_MARGIN
+        (
+            not REQUIRE_HIGHER_TIMEFRAME_CONFIRMATION
+            or
+            long_higher_ok
+        )
     ):
 
         final = "LONG"
 
-    # -----------------------------------------------------
-    # SHORT
-    # -----------------------------------------------------
-
     elif (
-        daily_signal == "SHORT"
+        valid_count >= MIN_VALID_TIMEFRAMES
         and
-        four_hour_signal == "SHORT"
+        short_direction_ok
         and
-        daily_quality >= MIN_QUALITY
+        short_quality_ok
         and
-        four_hour_quality >= MIN_QUALITY
-        and
-        lower_short_count >= MIN_LOWER_CONFIRMATIONS
-        and
-        short_ratio >= MIN_DIRECTIONAL_RATIO
-        and
-        short_weight > long_weight
-        and
-        short_quality_ratio > long_quality_ratio
-        and
-        quality_margin >= MIN_SCORE_MARGIN
+        (
+            not REQUIRE_HIGHER_TIMEFRAME_CONFIRMATION
+            or
+            short_higher_ok
+        )
     ):
 
         final = "SHORT"
 
+    # =====================================================
+    # DIAGNOSTIC REASON
+    # =====================================================
+
+    reason = "OK"
+
+    if final == "NO TRADE":
+
+        if valid_count < MIN_VALID_TIMEFRAMES:
+
+            reason = (
+                f"VALID TF کم است: "
+                f"{valid_count}/{MIN_VALID_TIMEFRAMES}"
+            )
+
+        elif (
+            not long_direction_ok
+            and
+            not short_direction_ok
+        ):
+
+            reason = (
+                "تأیید جهت کافی نیست"
+            )
+
+        elif (
+            not long_quality_ok
+            and
+            not short_quality_ok
+        ):
+
+            reason = (
+                "برتری کیفیت کافی نیست"
+            )
+
+        elif (
+            REQUIRE_HIGHER_TIMEFRAME_CONFIRMATION
+            and
+            not long_higher_ok
+            and
+            not short_higher_ok
+        ):
+
+            reason = (
+                "1D و 4H هم‌جهت نیستند"
+            )
+
+        else:
+
+            reason = (
+                "شرایط ورود کامل نیست"
+            )
+
+    if diagnostic:
+
+        print(
+            "\n--- SIGNAL DIAGNOSTIC ---"
+        )
+
+        for timeframe in [
+            "1h",
+            "2h",
+            "3h",
+            "4h",
+            "1d"
+        ]:
+
+            r = results.get(
+                timeframe,
+                {}
+            )
+
+            print(
+                f"{timeframe}: "
+                f"{r.get('signal', 'NO TRADE')} | "
+                f"score={r.get('score', 0):.2f} | "
+                f"quality={r.get('quality', 0):.2f}"
+            )
+
+        print(
+            "VALID:",
+            valid_count
+        )
+
+        print(
+            "LONG:",
+            long_count,
+            "weight=",
+            round(long_weight, 2),
+            "ratio=",
+            round(long_ratio, 2)
+        )
+
+        print(
+            "SHORT:",
+            short_count,
+            "weight=",
+            round(short_weight, 2),
+            "ratio=",
+            round(short_ratio, 2)
+        )
+
+        print(
+            "1D:",
+            daily_signal,
+            round(daily_quality, 2)
+        )
+
+        print(
+            "4H:",
+            four_hour_signal,
+            round(four_hour_quality, 2)
+        )
+
+        print(
+            "MARGIN:",
+            round(quality_margin, 3)
+        )
+
+        print(
+            "FINAL:",
+            final,
+            "|",
+            reason
+        )
+
     return {
         "signal": final,
 
-        "long_weight": long_weight,
+        "reason": reason,
 
+        "valid_count": valid_count,
+
+        "long_weight": long_weight,
         "short_weight": short_weight,
 
         "long_ratio": long_ratio,
-
         "short_ratio": short_ratio,
 
         "long_quality": long_quality_ratio,
-
         "short_quality": short_quality_ratio,
 
         "quality_margin": quality_margin,
 
         "long_count": long_count,
-
         "short_count": short_count,
 
-        "lower_long_count":
-            lower_long_count,
+        "daily_signal": daily_signal,
+        "daily_quality": daily_quality,
 
-        "lower_short_count":
-            lower_short_count,
+        "four_hour_signal": four_hour_signal,
+        "four_hour_quality": four_hour_quality,
 
-        "daily_signal":
-            daily_signal,
-
-        "daily_quality":
-            daily_quality,
-
-        "four_hour_signal":
-            four_hour_signal,
-
-        "four_hour_quality":
-            four_hour_quality,
-
-        "timeframes":
-            results
+        "timeframes": results
     }
 
 
 # =========================================================
 # SIMULATE TRADE
-# FIX: previously, if TP1 was hit but neither break-even
-# nor TP2 was reached before MAX_HOLD_CANDLES, the trade
-# was scored as a flat "TIMEOUT" with r = 0.0. This erased
-# the partial profit that was already locked in at TP1 and
-# systematically understated results. Now TIMEOUT trades are
-# marked-to-market against the last available close price,
-# respecting whichever stage (pre-TP1 or post-TP1/BE) the
-# trade was in when time ran out.
 # =========================================================
 
 def simulate_trade(
@@ -670,21 +871,33 @@ def simulate_trade(
     if atr is None or atr <= 0:
         return None
 
-    # =====================================================
-    # LEVELS
-    # =====================================================
-
     if signal == "LONG":
 
-        sl = entry - (atr * SL_ATR)
-        tp1 = entry + (atr * TP1_ATR)
-        tp2 = entry + (atr * TP2_ATR)
+        sl = entry - (
+            atr * SL_ATR
+        )
+
+        tp1 = entry + (
+            atr * TP1_ATR
+        )
+
+        tp2 = entry + (
+            atr * TP2_ATR
+        )
 
     elif signal == "SHORT":
 
-        sl = entry + (atr * SL_ATR)
-        tp1 = entry - (atr * TP1_ATR)
-        tp2 = entry - (atr * TP2_ATR)
+        sl = entry + (
+            atr * SL_ATR
+        )
+
+        tp1 = entry - (
+            atr * TP1_ATR
+        )
+
+        tp2 = entry - (
+            atr * TP2_ATR
+        )
 
     else:
 
@@ -694,16 +907,29 @@ def simulate_trade(
 
     last_index = min(
         len(df),
-        entry_index + MAX_HOLD_CANDLES + 1
+        entry_index +
+        MAX_HOLD_CANDLES +
+        1
     )
 
     last_close = entry
 
-    for j in range(entry_index, last_index):
+    for j in range(
+        entry_index,
+        last_index
+    ):
 
-        high = safe_float(df.iloc[j]["high"])
-        low = safe_float(df.iloc[j]["low"])
-        close = safe_float(df.iloc[j]["close"])
+        high = safe_float(
+            df.iloc[j]["high"]
+        )
+
+        low = safe_float(
+            df.iloc[j]["low"]
+        )
+
+        close = safe_float(
+            df.iloc[j]["close"]
+        )
 
         if high is None or low is None:
             continue
@@ -769,7 +995,7 @@ def simulate_trade(
         # SHORT
         # =================================================
 
-        elif signal == "SHORT":
+        else:
 
             if not tp1_hit:
 
@@ -820,22 +1046,35 @@ def simulate_trade(
                     }
 
     # =====================================================
-    # TIME RAN OUT -> MARK TO MARKET
+    # TIMEOUT
     # =====================================================
 
-    bars = max(1, last_index - entry_index)
+    bars = max(
+        1,
+        last_index - entry_index
+    )
 
     if not tp1_hit:
 
-        # No partial profit was locked in yet.
-        # Mark the open trade to the last known close,
-        # clipped between the SL and TP1 distance.
         if signal == "LONG":
-            r = (last_close - entry) / atr
-        else:
-            r = (entry - last_close) / atr
 
-        r = max(-1.0, min(r, TP1_ATR))
+            r = (
+                last_close - entry
+            ) / atr
+
+        else:
+
+            r = (
+                entry - last_close
+            ) / atr
+
+        r = max(
+            -1.0,
+            min(
+                r,
+                TP1_ATR
+            )
+        )
 
         return {
             "result": "TIMEOUT",
@@ -843,30 +1082,45 @@ def simulate_trade(
             "bars": bars
         }
 
+    # TP1 already hit
+    if signal == "LONG":
+
+        progress = (
+            last_close - entry
+        ) / (
+            tp2 - entry
+        )
+
     else:
 
-        # TP1 already locked in 0.5R. The remaining runner
-        # is stopped at break-even, so it can only add value
-        # between 0 and 1.0 extra R (from entry to tp2).
-        if signal == "LONG":
-            progress = (last_close - entry) / (tp2 - entry)
-        else:
-            progress = (entry - last_close) / (entry - tp2)
+        progress = (
+            entry - last_close
+        ) / (
+            entry - tp2
+        )
 
-        progress = max(0.0, min(progress, 1.0))
+    progress = max(
+        0.0,
+        min(
+            progress,
+            1.0
+        )
+    )
 
-        return {
-            "result": "TIMEOUT",
-            "r": 0.5 + progress - COST_R,
-            "bars": bars
-        }
+    return {
+        "result": "TIMEOUT",
+        "r": 0.5 + progress - COST_R,
+        "bars": bars
+    }
 
 
 # =========================================================
-# LOAD ALL DATA
+# LOAD SYMBOL DATA
 # =========================================================
 
-def load_symbol_data(symbol):
+def load_symbol_data(
+    symbol
+):
 
     datasets = {}
 
@@ -889,6 +1143,7 @@ def load_symbol_data(symbol):
 
             print(
                 "DATA ERROR:",
+                symbol_name(symbol),
                 timeframe,
                 e
             )
@@ -903,6 +1158,7 @@ def load_symbol_data(symbol):
 
             print(
                 "NO DATA:",
+                symbol_name(symbol),
                 timeframe
             )
 
@@ -912,6 +1168,7 @@ def load_symbol_data(symbol):
 
             print(
                 "NOT ENOUGH DATA:",
+                symbol_name(symbol),
                 timeframe,
                 len(df)
             )
@@ -928,7 +1185,7 @@ def load_symbol_data(symbol):
 
 
 # =========================================================
-# GET COMMON TIMELINE
+# TIMELINE
 # =========================================================
 
 def get_timeline(
@@ -942,24 +1199,33 @@ def get_timeline(
     if base is None:
         return []
 
-    # If timestamps exist, use them.
-    for column in [
-        "timestamp",
-        "time",
-        "open_time"
-    ]:
+    if "open_time" in base.columns:
 
-        if column in base.columns:
+        return list(
+            base["open_time"]
+            .iloc[
+                MIN_ANALYSIS_CANDLES:
+            ]
+        )
 
-            return list(
-                base[column]
-                .iloc[
-                    MIN_ANALYSIS_CANDLES:
-                ]
-            )
+    if "timestamp" in base.columns:
 
-    # Fallback:
-    # index-based timeline.
+        return list(
+            base["timestamp"]
+            .iloc[
+                MIN_ANALYSIS_CANDLES:
+            ]
+        )
+
+    if "time" in base.columns:
+
+        return list(
+            base["time"]
+            .iloc[
+                MIN_ANALYSIS_CANDLES:
+            ]
+        )
+
     return list(
         range(
             MIN_ANALYSIS_CANDLES,
@@ -969,13 +1235,15 @@ def get_timeline(
 
 
 # =========================================================
-# BACKTEST SYMBOL
+# BACKTEST ONE SYMBOL
 # =========================================================
 
-def backtest_symbol(symbol):
+def backtest_symbol(
+    symbol
+):
 
     print(
-        "\n" + "=" * 65
+        "\n" + "=" * 70
     )
 
     print(
@@ -984,7 +1252,7 @@ def backtest_symbol(symbol):
     )
 
     print(
-        "=" * 65
+        "=" * 70
     )
 
     datasets = load_symbol_data(
@@ -992,6 +1260,12 @@ def backtest_symbol(symbol):
     )
 
     if datasets is None:
+
+        print(
+            "SKIPPED:",
+            symbol_name(symbol),
+            "DATA FAILURE"
+        )
 
         return None
 
@@ -1004,6 +1278,8 @@ def backtest_symbol(symbol):
     if not timeline:
 
         print(
+            "SKIPPED:",
+            symbol_name(symbol),
             "NO TIMELINE"
         )
 
@@ -1011,11 +1287,19 @@ def backtest_symbol(symbol):
 
     trades = []
 
-    # =====================================================
-    # BACKTEST LOOP
-    # =====================================================
-
     position_until = MIN_ANALYSIS_CANDLES
+
+    signal_counts = {
+        "LONG": 0,
+        "SHORT": 0,
+        "NO TRADE": 0
+    }
+
+    blocked_reasons = {}
+
+    # =====================================================
+    # LOOP
+    # =====================================================
 
     for position, current_time in enumerate(
         timeline
@@ -1032,31 +1316,37 @@ def backtest_symbol(symbol):
         if i < position_until:
             continue
 
-        # -------------------------------------------------
-        # ANALYZE ONLY PAST DATA
-        # -------------------------------------------------
-
         results = analyze_at_time(
             datasets,
             current_time
         )
 
         final = build_final_signal(
-            results
+            results,
+            diagnostic=False
         )
 
         signal = final["signal"]
 
-        if signal not in [
-            "LONG",
-            "SHORT"
-        ]:
+        signal_counts[
+            signal
+        ] = signal_counts.get(
+            signal,
+            0
+        ) + 1
+
+        if signal == "NO TRADE":
+
+            reason = final["reason"]
+
+            blocked_reasons[
+                reason
+            ] = blocked_reasons.get(
+                reason,
+                0
+            ) + 1
 
             continue
-
-        # -------------------------------------------------
-        # ENTRY ATR
-        # -------------------------------------------------
 
         entry_data = results.get(
             "1h",
@@ -1070,11 +1360,15 @@ def backtest_symbol(symbol):
         )
 
         if atr is None or atr <= 0:
-            continue
 
-        # -------------------------------------------------
-        # ENTRY
-        # -------------------------------------------------
+            blocked_reasons[
+                "ATR نامعتبر"
+            ] = blocked_reasons.get(
+                "ATR نامعتبر",
+                0
+            ) + 1
+
+            continue
 
         trade = simulate_trade(
             df=base_df,
@@ -1088,8 +1382,7 @@ def backtest_symbol(symbol):
 
         trades.append({
 
-            "signal":
-                signal,
+            "signal": signal,
 
             "result":
                 trade["result"],
@@ -1122,24 +1415,77 @@ def backtest_symbol(symbol):
         )
 
     # =====================================================
+    # PRINT DIAGNOSTIC
+    # =====================================================
+
+    print(
+        "\nSIGNAL SUMMARY:",
+        symbol_name(symbol)
+    )
+
+    print(
+        "LONG SIGNALS:",
+        signal_counts["LONG"]
+    )
+
+    print(
+        "SHORT SIGNALS:",
+        signal_counts["SHORT"]
+    )
+
+    print(
+        "NO TRADE:",
+        signal_counts["NO TRADE"]
+    )
+
+    print(
+        "TOP BLOCK REASONS:"
+    )
+
+    for reason, count in sorted(
+        blocked_reasons.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:5]:
+
+        print(
+            " ",
+            count,
+            "x",
+            reason
+        )
+
+    # =====================================================
     # NO TRADES
     # =====================================================
 
     if not trades:
 
         print(
-            "NO TRADES"
+            "\nNO TRADES:",
+            symbol_name(symbol)
         )
 
-        return None
+        return {
+            "symbol": symbol,
+            "trades": 0,
+            "long": 0,
+            "short": 0,
+            "tp2": 0,
+            "tp1": 0,
+            "sl": 0,
+            "timeout": 0,
+            "win_rate": 0.0,
+            "profit": 0.0,
+            "signals": (
+                signal_counts["LONG"] +
+                signal_counts["SHORT"]
+            )
+        }
 
     data = pd.DataFrame(
         trades
     )
-
-    # =====================================================
-    # RESULTS
-    # =====================================================
 
     tp2 = len(
         data[
@@ -1178,14 +1524,14 @@ def backtest_symbol(symbol):
     )
 
     completed = (
-        tp1 +
         tp2 +
+        tp1 +
         sl
     )
 
     wins = (
-        tp1 +
-        tp2
+        tp2 +
+        tp1
     )
 
     win_rate = (
@@ -1198,9 +1544,10 @@ def backtest_symbol(symbol):
         data["r"].sum()
     )
 
-    # =====================================================
-    # PRINT
-    # =====================================================
+    print(
+        "\nRESULT:",
+        symbol_name(symbol)
+    )
 
     print(
         "Trades:",
@@ -1256,36 +1603,20 @@ def backtest_symbol(symbol):
     )
 
     return {
-
-        "symbol":
-            symbol,
-
-        "trades":
-            len(data),
-
-        "long":
-            long_count,
-
-        "short":
-            short_count,
-
-        "tp2":
-            tp2,
-
-        "tp1":
-            tp1,
-
-        "sl":
-            sl,
-
-        "timeout":
-            timeout,
-
-        "win_rate":
-            win_rate,
-
-        "profit":
-            total_r
+        "symbol": symbol,
+        "trades": len(data),
+        "long": long_count,
+        "short": short_count,
+        "tp2": tp2,
+        "tp1": tp1,
+        "sl": sl,
+        "timeout": timeout,
+        "win_rate": win_rate,
+        "profit": total_r,
+        "signals": (
+            signal_counts["LONG"] +
+            signal_counts["SHORT"]
+        )
     }
 
 
@@ -1296,7 +1627,7 @@ def backtest_symbol(symbol):
 def main():
 
     print(
-        "\n" + "=" * 65
+        "\n" + "=" * 70
     )
 
     print(
@@ -1304,7 +1635,36 @@ def main():
     )
 
     print(
-        "=" * 65
+        "=" * 70
+    )
+
+    print(
+        "SYMBOLS:",
+        len(SYMBOLS)
+    )
+
+    print(
+        "NEW FILTER:"
+    )
+
+    print(
+        "  Minimum valid TF:",
+        MIN_VALID_TIMEFRAMES
+    )
+
+    print(
+        "  Minimum quality:",
+        MIN_QUALITY
+    )
+
+    print(
+        "  Direction ratio:",
+        MIN_DIRECTIONAL_RATIO
+    )
+
+    print(
+        "  Higher TF confirmation:",
+        REQUIRE_HIGHER_TIMEFRAME_CONFIRMATION
     )
 
     results = []
@@ -1326,8 +1686,8 @@ def main():
         except Exception as e:
 
             print(
-                "ERROR:",
-                symbol,
+                "\nFATAL SYMBOL ERROR:",
+                symbol_name(symbol),
                 e
             )
 
@@ -1379,6 +1739,11 @@ def main():
         for x in results
     )
 
+    total_signals = sum(
+        x["signals"]
+        for x in results
+    )
+
     completed = (
         total_tp2 +
         total_tp1 +
@@ -1401,7 +1766,7 @@ def main():
     # =====================================================
 
     print(
-        "\n" + "=" * 65
+        "\n" + "=" * 70
     )
 
     print(
@@ -1409,7 +1774,28 @@ def main():
     )
 
     print(
-        "=" * 65
+        "=" * 70
+    )
+
+    print(
+        "SYMBOLS CHECKED:",
+        len(results),
+        "/",
+        len(SYMBOLS)
+    )
+
+    print(
+        "SYMBOLS WITH SIGNALS:",
+        sum(
+            1
+            for x in results
+            if x["signals"] > 0
+        )
+    )
+
+    print(
+        "TOTAL SIGNALS:",
+        total_signals
     )
 
     print(
@@ -1455,6 +1841,10 @@ def main():
         "R"
     )
 
+    # =====================================================
+    # RANKING
+    # =====================================================
+
     print(
         "\nRANKING"
     )
@@ -1465,28 +1855,18 @@ def main():
     ):
 
         print(
-            n,
-            symbol_name(
-                result["symbol"]
-            ),
-            "| Trades:",
-            result["trades"],
-            "| Win:",
-            round(
-                result["win_rate"],
-                2
-            ),
-            "%",
-            "| Profit:",
-            round(
-                result["profit"],
-                2
-            ),
-            "R"
+            f"{n:02d}. "
+            f"{symbol_name(result['symbol'])} | "
+            f"Signals: {result['signals']} | "
+            f"Trades: {result['trades']} | "
+            f"LONG: {result['long']} | "
+            f"SHORT: {result['short']} | "
+            f"Win: {result['win_rate']:.2f}% | "
+            f"Profit: {result['profit']:.2f}R"
         )
 
     print(
-        "\n" + "=" * 65
+        "\n" + "=" * 70
     )
 
     print(
@@ -1494,7 +1874,7 @@ def main():
     )
 
     print(
-        "=" * 65
+        "=" * 70
     )
 
 
