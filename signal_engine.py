@@ -4,11 +4,6 @@ from risk_manager import calculate_risk
 
 # =========================================================
 # SETTINGS
-# FIX: loosened from 0.67/0.60/0.08 so altcoins (which trend
-# less cleanly than BTC) can actually clear the bar sometimes.
-# Previously only BTC ever produced a signal across all 15
-# symbols with the stricter values. Keep these identical to
-# backtest.py whenever either file changes.
 # =========================================================
 
 MIN_QUALITY = 0.60
@@ -27,12 +22,32 @@ MIN_SCORE_MARGIN = 0.05
 def _safe_float(value):
 
     try:
+        value = float(value)
 
-        return float(value)
+        if value != value:  # NaN
+            return 0.0
+
+        return value
 
     except Exception:
-
         return 0.0
+
+
+# =========================================================
+# CLAMP
+# =========================================================
+
+def _clamp(value, minimum=0.0, maximum=1.0):
+
+    value = _safe_float(value)
+
+    if value < minimum:
+        return minimum
+
+    if value > maximum:
+        return maximum
+
+    return value
 
 
 # =========================================================
@@ -43,9 +58,7 @@ def final_signal(
     symbol="BTC-SWAP-USDT"
 ):
 
-    results = analyze_timeframes(
-        symbol
-    )
+    results = analyze_timeframes(symbol)
 
     # =====================================================
     # AGGREGATION
@@ -54,19 +67,22 @@ def final_signal(
     long_weight = 0.0
     short_weight = 0.0
 
-    long_quality = 0.0
-    short_quality = 0.0
+    long_quality_weighted = 0.0
+    short_quality_weighted = 0.0
 
-    total_valid_weight = 0.0
+    total_weight = 0.0
 
     long_count = 0
     short_count = 0
 
-    # -----------------------------------------------------
-    # ONLY VALID SIGNALS
-    # -----------------------------------------------------
+    # =====================================================
+    # PROCESS TIMEFRAMES
+    # =====================================================
 
     for timeframe, result in results.items():
+
+        if not isinstance(result, dict):
+            continue
 
         signal = result.get(
             "signal",
@@ -76,39 +92,38 @@ def final_signal(
         weight = _safe_float(
             result.get(
                 "weight",
-                0
-            )
-        )
-
-        quality = _safe_float(
-            result.get(
-                "quality",
-                result.get(
-                    "score_ratio",
-                    0
-                )
+                0.0
             )
         )
 
         if weight <= 0:
             continue
 
-        if signal not in [
-            "LONG",
-            "SHORT"
-        ]:
+        total_weight += weight
 
-            # IMPORTANT:
-            # NO TRADE is NOT confirmation.
-            continue
+        # -------------------------------------------------
+        # QUALITY
+        # -------------------------------------------------
+        #
+        # Prefer score_ratio from analysis_engine.
+        # Fallback to quality for compatibility.
+        #
 
-        if quality < 0:
-            quality = 0
+        quality = _safe_float(
+            result.get(
+                "score_ratio",
+                result.get(
+                    "quality",
+                    0.0
+                )
+            )
+        )
 
-        if quality > 1:
-            quality = 1
+        quality = _clamp(quality)
 
-        total_valid_weight += weight
+        # -------------------------------------------------
+        # LONG
+        # -------------------------------------------------
 
         if signal == "LONG":
 
@@ -116,10 +131,13 @@ def final_signal(
 
             long_weight += weight
 
-            long_quality += (
-                quality *
-                weight
+            long_quality_weighted += (
+                quality * weight
             )
+
+        # -------------------------------------------------
+        # SHORT
+        # -------------------------------------------------
 
         elif signal == "SHORT":
 
@@ -127,59 +145,80 @@ def final_signal(
 
             short_weight += weight
 
-            short_quality += (
-                quality *
-                weight
+            short_quality_weighted += (
+                quality * weight
             )
 
+        # -------------------------------------------------
+        # NO TRADE
+        # -------------------------------------------------
+
+        else:
+
+            continue
+
     # =====================================================
-    # RATIOS
+    # WEIGHT RATIOS
     # =====================================================
 
-    total_weight = sum(
-        _safe_float(
-            result.get(
-                "weight",
-                0
-            )
+    if total_weight > 0:
+
+        long_ratio = (
+            long_weight /
+            total_weight
         )
-        for result in results.values()
-    )
 
-    if total_weight <= 0:
+        short_ratio = (
+            short_weight /
+            total_weight
+        )
 
-        total_weight = 1.0
+    else:
 
-    long_ratio = (
-        long_weight /
-        total_weight
-    )
-
-    short_ratio = (
-        short_weight /
-        total_weight
-    )
+        long_ratio = 0.0
+        short_ratio = 0.0
 
     # =====================================================
-    # NORMALIZED QUALITY
+    # QUALITY
     # =====================================================
+    #
+    # IMPORTANT:
+    # Normalize each direction by ITS OWN weight.
+    #
+    # This prevents a direction with fewer signals from
+    # artificially getting a quality advantage.
+    #
 
-    if total_valid_weight > 0:
+    if long_weight > 0:
 
         long_quality_ratio = (
-            long_quality /
-            total_valid_weight
-        )
-
-        short_quality_ratio = (
-            short_quality /
-            total_valid_weight
+            long_quality_weighted /
+            long_weight
         )
 
     else:
 
         long_quality_ratio = 0.0
+
+    if short_weight > 0:
+
+        short_quality_ratio = (
+            short_quality_weighted /
+            short_weight
+        )
+
+    else:
+
         short_quality_ratio = 0.0
+
+    # =====================================================
+    # QUALITY MARGIN
+    # =====================================================
+
+    quality_margin = abs(
+        long_quality_ratio -
+        short_quality_ratio
+    )
 
     # =====================================================
     # HIGHER TIMEFRAME FILTER
@@ -195,6 +234,12 @@ def final_signal(
         {}
     )
 
+    if not isinstance(daily, dict):
+        daily = {}
+
+    if not isinstance(four_hour, dict):
+        four_hour = {}
+
     daily_signal = daily.get(
         "signal",
         "NO TRADE"
@@ -205,17 +250,23 @@ def final_signal(
         "NO TRADE"
     )
 
-    daily_quality = _safe_float(
+    daily_quality = _clamp(
         daily.get(
-            "quality",
-            0
+            "score_ratio",
+            daily.get(
+                "quality",
+                0.0
+            )
         )
     )
 
-    four_hour_quality = _safe_float(
+    four_hour_quality = _clamp(
         four_hour.get(
-            "quality",
-            0
+            "score_ratio",
+            four_hour.get(
+                "quality",
+                0.0
+            )
         )
     )
 
@@ -240,24 +291,34 @@ def final_signal(
             {}
         )
 
+        if not isinstance(result, dict):
+            continue
+
         signal = result.get(
             "signal",
             "NO TRADE"
         )
 
-        quality = _safe_float(
+        quality = _clamp(
             result.get(
-                "quality",
-                0
+                "score_ratio",
+                result.get(
+                    "quality",
+                    0.0
+                )
             )
         )
 
         weight = _safe_float(
             result.get(
                 "weight",
-                0
+                0.0
             )
         )
+
+        # -------------------------------------------------
+        # LONG CONFIRMATION
+        # -------------------------------------------------
 
         if (
             signal == "LONG"
@@ -266,7 +327,12 @@ def final_signal(
         ):
 
             lower_long_count += 1
+
             lower_long_weight += weight
+
+        # -------------------------------------------------
+        # SHORT CONFIRMATION
+        # -------------------------------------------------
 
         elif (
             signal == "SHORT"
@@ -275,11 +341,22 @@ def final_signal(
         ):
 
             lower_short_count += 1
+
             lower_short_weight += weight
 
     # =====================================================
-    # SCORE MARGIN
+    # DIRECTIONAL SCORE MARGIN
     # =====================================================
+
+    # Compare actual weighted directional quality.
+    #
+    # Example:
+    #
+    # LONG quality = 0.75
+    # SHORT quality = 0.60
+    #
+    # margin = 0.15
+    #
 
     quality_margin = abs(
         long_quality_ratio -
@@ -293,7 +370,7 @@ def final_signal(
     final = "NO TRADE"
 
     # =====================================================
-    # LONG
+    # LONG CONDITIONS
     # =====================================================
 
     long_conditions = (
@@ -314,7 +391,7 @@ def final_signal(
 
         four_hour_quality >= MIN_QUALITY
 
-        # At least two lower TF confirmations
+        # Lower timeframe confirmation
         and
 
         lower_long_count >= MIN_LOWER_CONFIRMATIONS
@@ -324,16 +401,18 @@ def final_signal(
 
         long_ratio >= MIN_DIRECTIONAL_RATIO
 
+        # LONG must dominate SHORT
         and
 
         long_weight > short_weight
 
-        # Quality advantage
+        # LONG quality must dominate SHORT
         and
 
         long_quality_ratio >
         short_quality_ratio
 
+        # Minimum quality advantage
         and
 
         quality_margin >= MIN_SCORE_MARGIN
@@ -344,17 +423,19 @@ def final_signal(
         final = "LONG"
 
     # =====================================================
-    # SHORT
+    # SHORT CONDITIONS
     # =====================================================
 
     short_conditions = (
 
+        # Higher timeframe direction
         daily_signal == "SHORT"
 
         and
 
         four_hour_signal == "SHORT"
 
+        # Higher timeframe quality
         and
 
         daily_quality >= MIN_QUALITY
@@ -363,23 +444,28 @@ def final_signal(
 
         four_hour_quality >= MIN_QUALITY
 
+        # Lower timeframe confirmation
         and
 
         lower_short_count >= MIN_LOWER_CONFIRMATIONS
 
+        # Overall directional weight
         and
 
         short_ratio >= MIN_DIRECTIONAL_RATIO
 
+        # SHORT must dominate LONG
         and
 
         short_weight > long_weight
 
+        # SHORT quality must dominate LONG
         and
 
         short_quality_ratio >
         long_quality_ratio
 
+        # Minimum quality advantage
         and
 
         quality_margin >= MIN_SCORE_MARGIN
@@ -394,17 +480,24 @@ def final_signal(
         final = "SHORT"
 
     # =====================================================
-    # ENTRY
+    # ENTRY DATA
     # =====================================================
 
     entry_price = None
     atr = None
 
-    # 1H is execution timeframe
+    # 1H = execution timeframe
     entry_data = results.get(
         "1h",
         {}
     )
+
+    if not isinstance(entry_data, dict):
+        entry_data = {}
+
+    # =====================================================
+    # ENTRY PRICE
+    # =====================================================
 
     try:
 
@@ -420,6 +513,10 @@ def final_signal(
 
         entry_price = None
 
+    # =====================================================
+    # ATR
+    # =====================================================
+
     try:
 
         if entry_data.get(
@@ -434,9 +531,9 @@ def final_signal(
 
         atr = None
 
-    # -----------------------------------------------------
-    # FALLBACK
-    # -----------------------------------------------------
+    # =====================================================
+    # FALLBACK ENTRY DATA
+    # =====================================================
 
     if entry_price is None:
 
@@ -451,6 +548,9 @@ def final_signal(
                 timeframe,
                 {}
             )
+
+            if not isinstance(data, dict):
+                continue
 
             try:
 
@@ -477,7 +577,7 @@ def final_signal(
                 continue
 
     # =====================================================
-    # RISK
+    # RISK MANAGEMENT
     # =====================================================
 
     if (
@@ -563,6 +663,18 @@ def final_signal(
         "lower_short_count":
             lower_short_count,
 
+        "lower_long_weight":
+            round(
+                lower_long_weight,
+                3
+            ),
+
+        "lower_short_weight":
+            round(
+                lower_short_weight,
+                3
+            ),
+
         "daily_signal":
             daily_signal,
 
@@ -628,6 +740,16 @@ if __name__ == "__main__":
     print(
         "SHORT WEIGHT:",
         result["short_weight"]
+    )
+
+    print(
+        "LONG RATIO:",
+        result["long_ratio"]
+    )
+
+    print(
+        "SHORT RATIO:",
+        result["short_ratio"]
     )
 
     print(
