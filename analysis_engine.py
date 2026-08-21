@@ -163,7 +163,7 @@ def analyze(df):
     long_context = price > ema50 or ema20 > ema50
     short_context = price < ema50 or ema20 < ema50
 
-    if trend_strength < 0.15:
+    if trend_strength < 0.22:
         return _no_trade("قدرت روند کافی نیست", price=price, atr=atr, rsi=rsi,
                           trend="WEAK", trend_strength=trend_strength)
 
@@ -278,9 +278,9 @@ def analyze(df):
     # (but not textbook-perfect) trend can still clear the entry bar.
     # =====================================================
     if not long_context:
-        long_score = min(long_score, 6)
+        long_score = min(long_score, 7)
     if not short_context:
-        short_score = min(short_score, 6)
+        short_score = min(short_score, 7)
 
     best_score = max(long_score, short_score)
     difference = abs(long_score - short_score)
@@ -292,7 +292,7 @@ def analyze(df):
     # instead of the stricter long_trend, and the score bar is 8 (was 9)
     # with the same score_gap safety margin of 2.
     # =====================================================
-    if long_context and long_score >= 8 and long_score > short_score and difference >= 2:
+    if long_context and long_score >= 9 and long_score > short_score and difference >= 2:
         stop_loss = price - atr * 2.0
         tp1 = price + atr * 2.0
         tp2 = price + atr * 4.0
@@ -317,7 +317,7 @@ def analyze(df):
     # =====================================================
     # SHORT
     # =====================================================
-    if short_context and short_score >= 8 and short_score > long_score and difference >= 2:
+    if short_context and short_score >= 9 and short_score > long_score and difference >= 2:
         stop_loss = price + atr * 2.0
         tp1 = price - atr * 2.0
         tp2 = price - atr * 4.0
