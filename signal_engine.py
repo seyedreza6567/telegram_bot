@@ -1,13 +1,14 @@
 from multi_timeframe import analyze_timeframes
+from multi_timeframe import analyze_timeframes
 from risk_manager import calculate_risk
 
 
 # =========================================================
 # SETTINGS
 # =========================================================
-MIN_QUALITY = 0.55
-MIN_LOWER_CONFIRMATIONS = 1
-MIN_DIRECTIONAL_RATIO = 0.45
+MIN_QUALITY = 0.60
+MIN_LOWER_CONFIRMATIONS = 2
+MIN_DIRECTIONAL_RATIO = 0.55
 
 
 def _safe_float(value):
