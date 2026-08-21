@@ -34,19 +34,43 @@ def calculate_rsi(series, period=14):
         adjust=False
     ).mean()
 
-    rs = avg_gain / avg_loss.replace(
-        0,
-        np.nan
+    rsi = pd.Series(
+        np.nan,
+        index=series.index,
+        dtype=float
     )
 
-    rsi = 100 - (
-        100 / (1 + rs)
-    )
+    normal = avg_loss > 0
 
-    rsi = rsi.where(
-        avg_loss != 0,
+    rsi.loc[normal] = (
         100
+        - (
+            100
+            / (
+                1
+                + (
+                    avg_gain.loc[normal]
+                    / avg_loss.loc[normal]
+                )
+            )
+        )
     )
+
+    no_loss = (
+        (avg_loss == 0)
+        &
+        (avg_gain > 0)
+    )
+
+    rsi.loc[no_loss] = 100.0
+
+    flat = (
+        (avg_loss == 0)
+        &
+        (avg_gain == 0)
+    )
+
+    rsi.loc[flat] = 50.0
 
     return rsi
 
@@ -57,8 +81,15 @@ def calculate_rsi(series, period=14):
 
 def calculate_macd(series):
 
-    ema12 = calculate_ema(series, 12)
-    ema26 = calculate_ema(series, 26)
+    ema12 = calculate_ema(
+        series,
+        12
+    )
+
+    ema26 = calculate_ema(
+        series,
+        26
+    )
 
     macd = ema12 - ema26
 
@@ -69,30 +100,37 @@ def calculate_macd(series):
 
     histogram = macd - signal
 
-    return macd, signal, histogram
+    return (
+        macd,
+        signal,
+        histogram
+    )
 
 
 # =========================================================
 # ATR
 # =========================================================
 
-def calculate_atr(df, period=14):
+def calculate_atr(
+    df,
+    period=14
+):
 
     previous_close = df["close"].shift(1)
 
     tr1 = (
-        df["high"] -
-        df["low"]
+        df["high"]
+        - df["low"]
     )
 
     tr2 = (
-        df["high"] -
-        previous_close
+        df["high"]
+        - previous_close
     ).abs()
 
     tr3 = (
-        df["low"] -
-        previous_close
+        df["low"]
+        - previous_close
     ).abs()
 
     true_range = pd.concat(
@@ -102,7 +140,9 @@ def calculate_atr(df, period=14):
             tr3
         ],
         axis=1
-    ).max(axis=1)
+    ).max(
+        axis=1
+    )
 
     return true_range.ewm(
         alpha=1 / period,
@@ -123,7 +163,10 @@ def _safe_float(value):
         if np.isfinite(value):
             return value
 
-    except Exception:
+    except (
+        TypeError,
+        ValueError
+    ):
         pass
 
     return None
@@ -139,36 +182,46 @@ def _no_trade(
     atr=None,
     rsi=None,
     trend="NEUTRAL",
-    trend_strength=0,
-    long_score=0,
-    short_score=0
+    trend_strength=0.0,
+    long_score=0.0,
+    short_score=0.0
 ):
+
+    best_score = max(
+        float(long_score),
+        float(short_score)
+    )
 
     return {
         "signal": "NO TRADE",
-        "score": max(
-            long_score,
-            short_score
-        ),
-        "confidence": 0,
 
-        "long_score": long_score,
-        "short_score": short_score,
+        "score": best_score,
+
+        "confidence": 0.0,
+
+        "long_score": float(long_score),
+        "short_score": float(short_score),
 
         "price": price,
         "atr": atr,
         "rsi": rsi,
 
         "trend": trend,
-        "trend_strength": trend_strength,
+        "trend_strength": float(
+            trend_strength
+        ),
 
         "score_ratio": round(
-            max(
-                long_score,
-                short_score
-            ) / 15.0,
+            min(
+                best_score / 15.0,
+                1.0
+            ),
             4
         ),
+
+        "stop_loss": None,
+        "tp1": None,
+        "take_profit": None,
 
         "reason": reason
     }
@@ -184,6 +237,15 @@ def analyze(df):
 
         return _no_trade(
             "داده موجود نیست"
+        )
+
+    if not isinstance(
+        df,
+        pd.DataFrame
+    ):
+
+        return _no_trade(
+            "نوع داده نامعتبر است"
         )
 
     required_columns = {
@@ -205,10 +267,43 @@ def analyze(df):
     if len(df) < 250:
 
         return _no_trade(
-            "داده کافی نیست"
+            f"داده کافی نیست: {len(df)}"
         )
 
     df = df.copy()
+
+    # =====================================================
+    # NUMERIC DATA
+    # =====================================================
+
+    for column in [
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]:
+
+        df[column] = pd.to_numeric(
+            df[column],
+            errors="coerce"
+        )
+
+    df = df.dropna(
+        subset=[
+            "high",
+            "low",
+            "close"
+        ]
+    ).reset_index(
+        drop=True
+    )
+
+    if len(df) < 250:
+
+        return _no_trade(
+            f"داده معتبر کافی نیست: {len(df)}"
+        )
 
     # =====================================================
     # INDICATORS
@@ -240,7 +335,9 @@ def analyze(df):
         df["macd"],
         df["macd_signal"],
         df["macd_hist"]
-    ) = calculate_macd(close)
+    ) = calculate_macd(
+        close
+    )
 
     df["atr"] = calculate_atr(
         df,
@@ -249,12 +346,15 @@ def analyze(df):
 
     df["volume_avg"] = (
         df["volume"]
-        .rolling(20)
+        .rolling(
+            20,
+            min_periods=20
+        )
         .mean()
     )
 
     # =====================================================
-    # CLOSED / LAST AVAILABLE CANDLE
+    # LAST CLOSED CANDLE
     # =====================================================
 
     last = df.iloc[-1]
@@ -302,6 +402,14 @@ def analyze(df):
         previous["macd_hist"]
     )
 
+    previous_ema20 = _safe_float(
+        previous["ema20"]
+    )
+
+    previous_ema50 = _safe_float(
+        previous["ema50"]
+    )
+
     previous3_ema20 = _safe_float(
         previous3["ema20"]
     )
@@ -333,6 +441,8 @@ def analyze(df):
         macd_signal,
         macd_hist,
         previous_macd_hist,
+        previous_ema20,
+        previous_ema50,
         previous3_ema20,
         previous3_ema50,
         previous5_close
@@ -354,6 +464,15 @@ def analyze(df):
 
         return _no_trade(
             "ATR نامعتبر",
+            price=price,
+            atr=atr,
+            rsi=rsi
+        )
+
+    if previous5_close <= 0:
+
+        return _no_trade(
+            "قیمت تاریخی نامعتبر",
             price=price,
             atr=atr,
             rsi=rsi
@@ -383,6 +502,16 @@ def analyze(df):
         ema20 < ema50
     )
 
+    trend = (
+        "BULLISH"
+        if long_trend
+        else
+        "BEARISH"
+        if short_trend
+        else
+        "NEUTRAL"
+    )
+
     if trend_strength < 0.30:
 
         return _no_trade(
@@ -390,7 +519,12 @@ def analyze(df):
             price=price,
             atr=atr,
             rsi=rsi,
-            trend="WEAK",
+            trend=(
+                "WEAK"
+                if not long_trend
+                and not short_trend
+                else trend
+            ),
             trend_strength=trend_strength
         )
 
@@ -404,11 +538,11 @@ def analyze(df):
 
     # =====================================================
     # SCORES
-    # Maximum theoretical score = 15
+    # MAXIMUM = 15
     # =====================================================
 
-    long_score = 0
-    short_score = 0
+    long_score = 0.0
+    short_score = 0.0
 
     long_reasons = []
     short_reasons = []
@@ -438,9 +572,9 @@ def analyze(df):
         )
 
     if (
-        ema20 > float(previous["ema20"])
+        ema20 > previous_ema20
         and
-        ema50 > float(previous["ema50"])
+        ema50 > previous_ema50
     ):
 
         long_score += 2
@@ -552,9 +686,9 @@ def analyze(df):
         )
 
     if (
-        ema20 < float(previous["ema20"])
+        ema20 < previous_ema20
         and
-        ema50 < float(previous["ema50"])
+        ema50 < previous_ema50
     ):
 
         short_score += 2
@@ -674,6 +808,26 @@ def analyze(df):
             )
 
     # =====================================================
+    # LIMIT SCORE
+    # =====================================================
+
+    long_score = max(
+        0.0,
+        min(
+            long_score,
+            15.0
+        )
+    )
+
+    short_score = max(
+        0.0,
+        min(
+            short_score,
+            15.0
+        )
+    )
+
+    # =====================================================
     # TREND GATE
     # =====================================================
 
@@ -681,18 +835,18 @@ def analyze(df):
 
         long_score = min(
             long_score,
-            7
+            7.0
         )
 
     if not short_trend:
 
         short_score = min(
             short_score,
-            7
+            7.0
         )
 
     # =====================================================
-    # FINAL
+    # FINAL SCORES
     # =====================================================
 
     best_score = max(
@@ -705,8 +859,9 @@ def analyze(df):
         short_score
     )
 
-    score_ratio = (
-        best_score / 15.0
+    score_ratio = min(
+        best_score / 15.0,
+        1.0
     )
 
     # =====================================================
@@ -724,41 +879,55 @@ def analyze(df):
     ):
 
         stop_loss = (
-            price -
-            atr * 2.0
+            price
+            - (
+                atr * 2.0
+            )
         )
 
         tp1 = (
-            price +
-            atr * 2.0
+            price
+            + (
+                atr * 2.0
+            )
         )
 
         tp2 = (
-            price +
-            atr * 4.0
+            price
+            + (
+                atr * 4.0
+            )
         )
 
         return {
             "signal": "LONG",
+
             "score": long_score,
+
             "confidence": min(
                 100,
                 55 + long_score * 4
             ),
+
             "long_score": long_score,
             "short_score": short_score,
+
             "price": price,
             "rsi": rsi,
             "atr": atr,
+
             "trend": "BULLISH",
             "trend_strength": trend_strength,
+
             "score_ratio": round(
                 long_score / 15.0,
                 4
             ),
+
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
+
             "reason": " | ".join(
                 long_reasons
             )
@@ -779,69 +948,90 @@ def analyze(df):
     ):
 
         stop_loss = (
-            price +
-            atr * 2.0
+            price
+            + (
+                atr * 2.0
+            )
         )
 
         tp1 = (
-            price -
-            atr * 2.0
+            price
+            - (
+                atr * 2.0
+            )
         )
 
         tp2 = (
-            price -
-            atr * 4.0
+            price
+            - (
+                atr * 4.0
+            )
         )
 
         return {
             "signal": "SHORT",
+
             "score": short_score,
+
             "confidence": min(
                 100,
                 55 + short_score * 4
             ),
+
             "long_score": long_score,
             "short_score": short_score,
+
             "price": price,
             "rsi": rsi,
             "atr": atr,
+
             "trend": "BEARISH",
             "trend_strength": trend_strength,
+
             "score_ratio": round(
                 short_score / 15.0,
                 4
             ),
+
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
+
             "reason": " | ".join(
                 short_reasons
             )
         }
 
+    # =====================================================
+    # NO TRADE
+    # =====================================================
+
     return {
         "signal": "NO TRADE",
+
         "score": best_score,
-        "confidence": 0,
+
+        "confidence": 0.0,
+
         "long_score": long_score,
         "short_score": short_score,
+
         "price": price,
         "rsi": rsi,
         "atr": atr,
-        "trend": (
-            "BULLISH"
-            if long_trend
-            else
-            "BEARISH"
-            if short_trend
-            else
-            "NEUTRAL"
-        ),
+
+        "trend": trend,
         "trend_strength": trend_strength,
+
         "score_ratio": round(
             score_ratio,
             4
         ),
+
+        "stop_loss": None,
+        "tp1": None,
+        "take_profit": None,
+
         "reason": "شرایط ورود کامل نیست"
     }
 
