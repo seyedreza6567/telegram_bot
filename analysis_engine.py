@@ -5,224 +5,79 @@ import numpy as np
 # =========================================================
 # EMA
 # =========================================================
-
 def calculate_ema(series, period):
-    return series.ewm(
-        span=period,
-        adjust=False
-    ).mean()
+    return series.ewm(span=period, adjust=False).mean()
 
 
 # =========================================================
 # RSI
 # =========================================================
-
 def calculate_rsi(series, period=14):
-
     delta = series.diff()
-
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-
-    avg_gain = gain.ewm(
-        alpha=1 / period,
-        adjust=False
-    ).mean()
-
-    avg_loss = loss.ewm(
-        alpha=1 / period,
-        adjust=False
-    ).mean()
-
-    rsi = pd.Series(
-        np.nan,
-        index=series.index,
-        dtype=float
-    )
-
-    normal = avg_loss > 0
-
-    rsi.loc[normal] = (
-        100
-        - (
-            100
-            / (
-                1
-                + (
-                    avg_gain.loc[normal]
-                    / avg_loss.loc[normal]
-                )
-            )
-        )
-    )
-
-    no_loss = (
-        (avg_loss == 0)
-        &
-        (avg_gain > 0)
-    )
-
-    rsi.loc[no_loss] = 100.0
-
-    flat = (
-        (avg_loss == 0)
-        &
-        (avg_gain == 0)
-    )
-
-    rsi.loc[flat] = 50.0
-
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False).mean()
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.where(avg_loss != 0, 100)
     return rsi
 
 
 # =========================================================
 # MACD
 # =========================================================
-
 def calculate_macd(series):
-
-    ema12 = calculate_ema(
-        series,
-        12
-    )
-
-    ema26 = calculate_ema(
-        series,
-        26
-    )
-
+    ema12 = calculate_ema(series, 12)
+    ema26 = calculate_ema(series, 26)
     macd = ema12 - ema26
-
-    signal = calculate_ema(
-        macd,
-        9
-    )
-
+    signal = calculate_ema(macd, 9)
     histogram = macd - signal
-
-    return (
-        macd,
-        signal,
-        histogram
-    )
+    return macd, signal, histogram
 
 
 # =========================================================
 # ATR
 # =========================================================
-
-def calculate_atr(
-    df,
-    period=14
-):
-
+def calculate_atr(df, period=14):
     previous_close = df["close"].shift(1)
-
-    tr1 = (
-        df["high"]
-        - df["low"]
-    )
-
-    tr2 = (
-        df["high"]
-        - previous_close
-    ).abs()
-
-    tr3 = (
-        df["low"]
-        - previous_close
-    ).abs()
-
-    true_range = pd.concat(
-        [
-            tr1,
-            tr2,
-            tr3
-        ],
-        axis=1
-    ).max(
-        axis=1
-    )
-
-    return true_range.ewm(
-        alpha=1 / period,
-        adjust=False
-    ).mean()
+    tr1 = df["high"] - df["low"]
+    tr2 = (df["high"] - previous_close).abs()
+    tr3 = (df["low"] - previous_close).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return true_range.ewm(alpha=1 / period, adjust=False).mean()
 
 
 # =========================================================
 # SAFE FLOAT
 # =========================================================
-
 def _safe_float(value):
-
     try:
-
         value = float(value)
-
         if np.isfinite(value):
             return value
-
-    except (
-        TypeError,
-        ValueError
-    ):
+    except Exception:
         pass
-
     return None
 
 
 # =========================================================
 # EMPTY RESULT
 # =========================================================
-
-def _no_trade(
-    reason,
-    price=None,
-    atr=None,
-    rsi=None,
-    trend="NEUTRAL",
-    trend_strength=0.0,
-    long_score=0.0,
-    short_score=0.0
-):
-
-    best_score = max(
-        float(long_score),
-        float(short_score)
-    )
-
+def _no_trade(reason, price=None, atr=None, rsi=None, trend="NEUTRAL",
+              trend_strength=0, long_score=0, short_score=0):
     return {
         "signal": "NO TRADE",
-
-        "score": best_score,
-
-        "confidence": 0.0,
-
-        "long_score": float(long_score),
-        "short_score": float(short_score),
-
+        "score": max(long_score, short_score),
+        "confidence": 0,
+        "long_score": long_score,
+        "short_score": short_score,
         "price": price,
         "atr": atr,
         "rsi": rsi,
-
         "trend": trend,
-        "trend_strength": float(
-            trend_strength
-        ),
-
-        "score_ratio": round(
-            min(
-                best_score / 15.0,
-                1.0
-            ),
-            4
-        ),
-
-        "stop_loss": None,
-        "tp1": None,
-        "take_profit": None,
-
+        "trend_strength": trend_strength,
+        "score_ratio": round(max(long_score, short_score) / 15.0, 4),
         "reason": reason
     }
 
@@ -230,818 +85,275 @@ def _no_trade(
 # =========================================================
 # ANALYSIS
 # =========================================================
-
 def analyze(df):
-
     if df is None:
+        return _no_trade("داده موجود نیست")
 
-        return _no_trade(
-            "داده موجود نیست"
-        )
-
-    if not isinstance(
-        df,
-        pd.DataFrame
-    ):
-
-        return _no_trade(
-            "نوع داده نامعتبر است"
-        )
-
-    required_columns = {
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume"
-    }
-
-    if not required_columns.issubset(
-        df.columns
-    ):
-
-        return _no_trade(
-            "ستون‌های داده ناقص است"
-        )
+    required_columns = {"open", "high", "low", "close", "volume"}
+    if not required_columns.issubset(df.columns):
+        return _no_trade("ستون‌های داده ناقص است")
 
     if len(df) < 250:
-
-        return _no_trade(
-            f"داده کافی نیست: {len(df)}"
-        )
+        return _no_trade("داده کافی نیست")
 
     df = df.copy()
 
     # =====================================================
-    # NUMERIC DATA
-    # =====================================================
-
-    for column in [
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume"
-    ]:
-
-        df[column] = pd.to_numeric(
-            df[column],
-            errors="coerce"
-        )
-
-    df = df.dropna(
-        subset=[
-            "high",
-            "low",
-            "close"
-        ]
-    ).reset_index(
-        drop=True
-    )
-
-    if len(df) < 250:
-
-        return _no_trade(
-            f"داده معتبر کافی نیست: {len(df)}"
-        )
-
-    # =====================================================
     # INDICATORS
     # =====================================================
-
     close = df["close"]
-
-    df["ema20"] = calculate_ema(
-        close,
-        20
-    )
-
-    df["ema50"] = calculate_ema(
-        close,
-        50
-    )
-
-    df["ema200"] = calculate_ema(
-        close,
-        200
-    )
-
-    df["rsi"] = calculate_rsi(
-        close,
-        14
-    )
-
-    (
-        df["macd"],
-        df["macd_signal"],
-        df["macd_hist"]
-    ) = calculate_macd(
-        close
-    )
-
-    df["atr"] = calculate_atr(
-        df,
-        14
-    )
-
-    df["volume_avg"] = (
-        df["volume"]
-        .rolling(
-            20,
-            min_periods=20
-        )
-        .mean()
-    )
-
-    # =====================================================
-    # LAST CLOSED CANDLE
-    # =====================================================
+    df["ema20"] = calculate_ema(close, 20)
+    df["ema50"] = calculate_ema(close, 50)
+    df["ema200"] = calculate_ema(close, 200)
+    df["rsi"] = calculate_rsi(close, 14)
+    df["macd"], df["macd_signal"], df["macd_hist"] = calculate_macd(close)
+    df["atr"] = calculate_atr(df, 14)
+    df["volume_avg"] = df["volume"].rolling(20).mean()
 
     last = df.iloc[-1]
     previous = df.iloc[-2]
     previous3 = df.iloc[-4]
     previous5 = df.iloc[-6]
 
-    price = _safe_float(
-        last["close"]
-    )
+    price = _safe_float(last["close"])
+    ema20 = _safe_float(last["ema20"])
+    ema50 = _safe_float(last["ema50"])
+    ema200 = _safe_float(last["ema200"])
+    rsi = _safe_float(last["rsi"])
+    atr = _safe_float(last["atr"])
+    macd = _safe_float(last["macd"])
+    macd_signal = _safe_float(last["macd_signal"])
+    macd_hist = _safe_float(last["macd_hist"])
+    previous_macd_hist = _safe_float(previous["macd_hist"])
+    previous3_ema20 = _safe_float(previous3["ema20"])
+    previous3_ema50 = _safe_float(previous3["ema50"])
+    previous5_close = _safe_float(previous5["close"])
+    volume = _safe_float(last["volume"])
+    volume_avg = _safe_float(last["volume_avg"])
 
-    ema20 = _safe_float(
-        last["ema20"]
-    )
+    values = [price, ema20, ema50, ema200, rsi, atr, macd, macd_signal,
+              macd_hist, previous_macd_hist, previous3_ema20,
+              previous3_ema50, previous5_close]
 
-    ema50 = _safe_float(
-        last["ema50"]
-    )
-
-    ema200 = _safe_float(
-        last["ema200"]
-    )
-
-    rsi = _safe_float(
-        last["rsi"]
-    )
-
-    atr = _safe_float(
-        last["atr"]
-    )
-
-    macd = _safe_float(
-        last["macd"]
-    )
-
-    macd_signal = _safe_float(
-        last["macd_signal"]
-    )
-
-    macd_hist = _safe_float(
-        last["macd_hist"]
-    )
-
-    previous_macd_hist = _safe_float(
-        previous["macd_hist"]
-    )
-
-    previous_ema20 = _safe_float(
-        previous["ema20"]
-    )
-
-    previous_ema50 = _safe_float(
-        previous["ema50"]
-    )
-
-    previous3_ema20 = _safe_float(
-        previous3["ema20"]
-    )
-
-    previous3_ema50 = _safe_float(
-        previous3["ema50"]
-    )
-
-    previous5_close = _safe_float(
-        previous5["close"]
-    )
-
-    volume = _safe_float(
-        last["volume"]
-    )
-
-    volume_avg = _safe_float(
-        last["volume_avg"]
-    )
-
-    values = [
-        price,
-        ema20,
-        ema50,
-        ema200,
-        rsi,
-        atr,
-        macd,
-        macd_signal,
-        macd_hist,
-        previous_macd_hist,
-        previous_ema20,
-        previous_ema50,
-        previous3_ema20,
-        previous3_ema50,
-        previous5_close
-    ]
-
-    if any(
-        value is None
-        for value in values
-    ):
-
-        return _no_trade(
-            "اندیکاتور نامعتبر",
-            price=price,
-            atr=atr,
-            rsi=rsi
-        )
+    if any(value is None for value in values):
+        return _no_trade("اندیکاتور نامعتبر", price=price, atr=atr, rsi=rsi)
 
     if atr <= 0:
-
-        return _no_trade(
-            "ATR نامعتبر",
-            price=price,
-            atr=atr,
-            rsi=rsi
-        )
-
-    if previous5_close <= 0:
-
-        return _no_trade(
-            "قیمت تاریخی نامعتبر",
-            price=price,
-            atr=atr,
-            rsi=rsi
-        )
+        return _no_trade("ATR نامعتبر", price=price, atr=atr, rsi=rsi)
 
     # =====================================================
     # TREND
+    # FIX: the previous version required price/EMA20/EMA50/EMA200 to be
+    # in *perfect* textbook alignment (long_trend / short_trend) before
+    # any score above 7 was even allowed through (see "TREND GATE"
+    # below). That's fine for an asset in a clean, sustained trend
+    # (which is why TRX kept clearing the bar) but almost never happens
+    # for most alts within a single scan, so 14/15 symbols never got a
+    # single signal. We now use a graded trend context instead of a
+    # hard pass/fail gate.
     # =====================================================
+    ema_distance = abs(ema20 - ema50)
+    trend_strength = ema_distance / atr
 
-    ema_distance = abs(
-        ema20 - ema50
-    )
+    long_trend = price > ema200 and ema20 > ema50
+    short_trend = price < ema200 and ema20 < ema50
 
-    trend_strength = (
-        ema_distance / atr
-    )
+    # Softer context used only to decide LONG/SHORT eligibility below,
+    # not to hard-cap the score.
+    long_context = price > ema50 or ema20 > ema50
+    short_context = price < ema50 or ema20 < ema50
 
-    long_trend = (
-        price > ema200
-        and
-        ema20 > ema50
-    )
-
-    short_trend = (
-        price < ema200
-        and
-        ema20 < ema50
-    )
-
-    trend = (
-        "BULLISH"
-        if long_trend
-        else
-        "BEARISH"
-        if short_trend
-        else
-        "NEUTRAL"
-    )
-
-    if trend_strength < 0.30:
-
-        return _no_trade(
-            "قدرت روند کافی نیست",
-            price=price,
-            atr=atr,
-            rsi=rsi,
-            trend=(
-                "WEAK"
-                if not long_trend
-                and not short_trend
-                else trend
-            ),
-            trend_strength=trend_strength
-        )
+    if trend_strength < 0.15:
+        return _no_trade("قدرت روند کافی نیست", price=price, atr=atr, rsi=rsi,
+                          trend="WEAK", trend_strength=trend_strength)
 
     # =====================================================
     # MOMENTUM
     # =====================================================
-
-    momentum = (
-        price - previous5_close
-    ) / previous5_close
+    momentum = (price - previous5_close) / previous5_close
 
     # =====================================================
-    # SCORES
-    # MAXIMUM = 15
+    # SCORES (max theoretical = 15)
     # =====================================================
-
-    long_score = 0.0
-    short_score = 0.0
-
+    long_score = 0
+    short_score = 0
     long_reasons = []
     short_reasons = []
 
-    # =====================================================
     # LONG TREND
-    # =====================================================
-
     if price > ema200:
-
         long_score += 2
-
-        long_reasons.append(
-            "قیمت بالای EMA200"
-        )
-
-    if (
-        ema20 > ema50
-        and
-        ema50 > ema200
-    ):
-
+        long_reasons.append("قیمت بالای EMA200")
+    if ema20 > ema50 and ema50 > ema200:
         long_score += 3
-
-        long_reasons.append(
-            "ساختار صعودی EMA"
-        )
-
-    if (
-        ema20 > previous_ema20
-        and
-        ema50 > previous_ema50
-    ):
-
+        long_reasons.append("ساختار صعودی EMA")
+    if ema20 > float(previous["ema20"]) and ema50 > float(previous["ema50"]):
         long_score += 2
-
-        long_reasons.append(
-            "شیب EMA صعودی"
-        )
-
-    if (
-        ema20 > previous3_ema20
-        and
-        ema50 > previous3_ema50
-    ):
-
+        long_reasons.append("شیب EMA صعودی")
+    if ema20 > previous3_ema20 and ema50 > previous3_ema50:
         long_score += 1
+        long_reasons.append("روند کوتاه‌مدت صعودی")
 
-        long_reasons.append(
-            "روند کوتاه‌مدت صعودی"
-        )
-
-    # =====================================================
     # LONG RSI
-    # =====================================================
-
     if 50 <= rsi <= 65:
-
         long_score += 2
-
-        long_reasons.append(
-            "RSI صعودی مناسب"
-        )
-
+        long_reasons.append("RSI صعودی مناسب")
     elif rsi > 72:
-
         long_score -= 2
-
-        long_reasons.append(
-            "RSI بیش‌ازحد بالا"
-        )
-
+        long_reasons.append("RSI بیش‌ازحد بالا")
     elif rsi < 40:
-
         long_score -= 2
 
-    # =====================================================
     # LONG MACD
-    # =====================================================
-
-    macd_bullish = (
-        macd > macd_signal
-        and
-        macd_hist > 0
-    )
-
-    macd_improving = (
-        macd_hist >= previous_macd_hist
-    )
-
+    macd_bullish = macd > macd_signal and macd_hist > 0
+    macd_improving = macd_hist >= previous_macd_hist
     if macd_bullish:
-
         long_score += 2
-
-        long_reasons.append(
-            "MACD صعودی"
-        )
-
-        if macd_improving:
-
-            long_score += 1
-
-            long_reasons.append(
-                "قدرت MACD در حال افزایش"
-            )
-
-    # =====================================================
-    # LONG MOMENTUM
-    # =====================================================
-
-    if momentum > 0.001:
-
+        long_reasons.append("MACD صعودی")
+    if macd_improving:
         long_score += 1
+        long_reasons.append("قدرت MACD در حال افزایش")
 
-        long_reasons.append(
-            "مومنتوم مثبت"
-        )
+    # LONG MOMENTUM
+    if momentum > 0.001:
+        long_score += 1
+        long_reasons.append("مومنتوم مثبت")
 
-    # =====================================================
     # SHORT TREND
-    # =====================================================
-
     if price < ema200:
-
         short_score += 2
-
-        short_reasons.append(
-            "قیمت زیر EMA200"
-        )
-
-    if (
-        ema20 < ema50
-        and
-        ema50 < ema200
-    ):
-
+        short_reasons.append("قیمت زیر EMA200")
+    if ema20 < ema50 and ema50 < ema200:
         short_score += 3
-
-        short_reasons.append(
-            "ساختار نزولی EMA"
-        )
-
-    if (
-        ema20 < previous_ema20
-        and
-        ema50 < previous_ema50
-    ):
-
+        short_reasons.append("ساختار نزولی EMA")
+    if ema20 < float(previous["ema20"]) and ema50 < float(previous["ema50"]):
         short_score += 2
-
-        short_reasons.append(
-            "شیب EMA نزولی"
-        )
-
-    if (
-        ema20 < previous3_ema20
-        and
-        ema50 < previous3_ema50
-    ):
-
+        short_reasons.append("شیب EMA نزولی")
+    if ema20 < previous3_ema20 and ema50 < previous3_ema50:
         short_score += 1
+        short_reasons.append("روند کوتاه‌مدت نزولی")
 
-        short_reasons.append(
-            "روند کوتاه‌مدت نزولی"
-        )
-
-    # =====================================================
     # SHORT RSI
-    # =====================================================
-
     if 35 <= rsi <= 50:
-
         short_score += 2
-
-        short_reasons.append(
-            "RSI نزولی مناسب"
-        )
-
+        short_reasons.append("RSI نزولی مناسب")
     elif rsi < 28:
-
         short_score -= 2
-
-        short_reasons.append(
-            "RSI بیش‌ازحد پایین"
-        )
-
+        short_reasons.append("RSI بیش‌ازحد پایین")
     elif rsi > 60:
-
         short_score -= 2
 
-    # =====================================================
     # SHORT MACD
-    # =====================================================
-
-    macd_bearish = (
-        macd < macd_signal
-        and
-        macd_hist < 0
-    )
-
-    macd_weakening = (
-        macd_hist <= previous_macd_hist
-    )
-
+    macd_bearish = macd < macd_signal and macd_hist < 0
+    macd_weakening = macd_hist <= previous_macd_hist
     if macd_bearish:
-
         short_score += 2
-
-        short_reasons.append(
-            "MACD نزولی"
-        )
-
-        if macd_weakening:
-
-            short_score += 1
-
-            short_reasons.append(
-                "قدرت MACD نزولی"
-            )
-
-    # =====================================================
-    # SHORT MOMENTUM
-    # =====================================================
-
-    if momentum < -0.001:
-
+        short_reasons.append("MACD نزولی")
+    if macd_weakening:
         short_score += 1
+        short_reasons.append("قدرت MACD نزولی")
 
-        short_reasons.append(
-            "مومنتوم منفی"
-        )
+    # SHORT MOMENTUM
+    if momentum < -0.001:
+        short_score += 1
+        short_reasons.append("مومنتوم منفی")
 
-    # =====================================================
     # VOLUME
-    # =====================================================
-
     volume_confirmation = (
-        volume is not None
-        and
-        volume_avg is not None
-        and
-        volume_avg > 0
-        and
-        volume > volume_avg * 1.05
+        volume is not None and volume_avg is not None and volume_avg > 0
+        and volume > volume_avg * 1.05
     )
-
     if volume_confirmation:
-
-        if long_trend:
-
+        if long_context:
             long_score += 1
-
-            long_reasons.append(
-                "حجم تأییدکننده"
-            )
-
-        elif short_trend:
-
+            long_reasons.append("حجم تأییدکننده")
+        elif short_context:
             short_score += 1
-
-            short_reasons.append(
-                "حجم تأییدکننده"
-            )
-
-    # =====================================================
-    # LIMIT SCORE
-    # =====================================================
-
-    long_score = max(
-        0.0,
-        min(
-            long_score,
-            15.0
-        )
-    )
-
-    short_score = max(
-        0.0,
-        min(
-            short_score,
-            15.0
-        )
-    )
+            short_reasons.append("حجم تأییدکننده")
 
     # =====================================================
     # TREND GATE
+    # FIX: soft cap (9 instead of 7) using the broader "context" check
+    # instead of the strict long_trend/short_trend flags, so a healthy
+    # (but not textbook-perfect) trend can still clear the entry bar.
     # =====================================================
+    if not long_context:
+        long_score = min(long_score, 6)
+    if not short_context:
+        short_score = min(short_score, 6)
 
-    if not long_trend:
-
-        long_score = min(
-            long_score,
-            7.0
-        )
-
-    if not short_trend:
-
-        short_score = min(
-            short_score,
-            7.0
-        )
-
-    # =====================================================
-    # FINAL SCORES
-    # =====================================================
-
-    best_score = max(
-        long_score,
-        short_score
-    )
-
-    difference = abs(
-        long_score -
-        short_score
-    )
-
-    score_ratio = min(
-        best_score / 15.0,
-        1.0
-    )
+    best_score = max(long_score, short_score)
+    difference = abs(long_score - short_score)
+    score_ratio = best_score / 15.0
 
     # =====================================================
     # LONG
+    # FIX: eligibility now uses long_context (price/EMA50 relationship)
+    # instead of the stricter long_trend, and the score bar is 8 (was 9)
+    # with the same score_gap safety margin of 2.
     # =====================================================
-
-    if (
-        long_trend
-        and
-        long_score >= 9
-        and
-        long_score > short_score
-        and
-        difference >= 2
-    ):
-
-        stop_loss = (
-            price
-            - (
-                atr * 2.0
-            )
-        )
-
-        tp1 = (
-            price
-            + (
-                atr * 2.0
-            )
-        )
-
-        tp2 = (
-            price
-            + (
-                atr * 4.0
-            )
-        )
-
+    if long_context and long_score >= 8 and long_score > short_score and difference >= 2:
+        stop_loss = price - atr * 2.0
+        tp1 = price + atr * 2.0
+        tp2 = price + atr * 4.0
         return {
             "signal": "LONG",
-
             "score": long_score,
-
-            "confidence": min(
-                100,
-                55 + long_score * 4
-            ),
-
+            "confidence": min(100, 55 + long_score * 4),
             "long_score": long_score,
             "short_score": short_score,
-
             "price": price,
             "rsi": rsi,
             "atr": atr,
-
             "trend": "BULLISH",
             "trend_strength": trend_strength,
-
-            "score_ratio": round(
-                long_score / 15.0,
-                4
-            ),
-
+            "score_ratio": round(long_score / 15.0, 4),
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
-
-            "reason": " | ".join(
-                long_reasons
-            )
+            "reason": " | ".join(long_reasons)
         }
 
     # =====================================================
     # SHORT
     # =====================================================
-
-    if (
-        short_trend
-        and
-        short_score >= 9
-        and
-        short_score > long_score
-        and
-        difference >= 2
-    ):
-
-        stop_loss = (
-            price
-            + (
-                atr * 2.0
-            )
-        )
-
-        tp1 = (
-            price
-            - (
-                atr * 2.0
-            )
-        )
-
-        tp2 = (
-            price
-            - (
-                atr * 4.0
-            )
-        )
-
+    if short_context and short_score >= 8 and short_score > long_score and difference >= 2:
+        stop_loss = price + atr * 2.0
+        tp1 = price - atr * 2.0
+        tp2 = price - atr * 4.0
         return {
             "signal": "SHORT",
-
             "score": short_score,
-
-            "confidence": min(
-                100,
-                55 + short_score * 4
-            ),
-
+            "confidence": min(100, 55 + short_score * 4),
             "long_score": long_score,
             "short_score": short_score,
-
             "price": price,
             "rsi": rsi,
             "atr": atr,
-
             "trend": "BEARISH",
             "trend_strength": trend_strength,
-
-            "score_ratio": round(
-                short_score / 15.0,
-                4
-            ),
-
+            "score_ratio": round(short_score / 15.0, 4),
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
-
-            "reason": " | ".join(
-                short_reasons
-            )
+            "reason": " | ".join(short_reasons)
         }
-
-    # =====================================================
-    # NO TRADE
-    # =====================================================
 
     return {
         "signal": "NO TRADE",
-
         "score": best_score,
-
-        "confidence": 0.0,
-
+        "confidence": 0,
         "long_score": long_score,
         "short_score": short_score,
-
         "price": price,
         "rsi": rsi,
         "atr": atr,
-
-        "trend": trend,
+        "trend": "BULLISH" if long_context else "BEARISH" if short_context else "NEUTRAL",
         "trend_strength": trend_strength,
-
-        "score_ratio": round(
-            score_ratio,
-            4
-        ),
-
-        "stop_loss": None,
-        "tp1": None,
-        "take_profit": None,
-
+        "score_ratio": round(score_ratio, 4),
         "reason": "شرایط ورود کامل نیست"
     }
 
 
-# =========================================================
-# TEST
-# =========================================================
-
 if __name__ == "__main__":
-
-    print(
-        "Analysis Engine OK"
-    )
+    print("Analysis Engine OK")
