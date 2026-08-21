@@ -1,14 +1,13 @@
 from multi_timeframe import analyze_timeframes
-from multi_timeframe import analyze_timeframes
 from risk_manager import calculate_risk
 
 
 # =========================================================
 # SETTINGS
 # =========================================================
-MIN_QUALITY = 0.60
+MIN_QUALITY = 0.62
 MIN_LOWER_CONFIRMATIONS = 2
-MIN_DIRECTIONAL_RATIO = 0.55
+MIN_DIRECTIONAL_RATIO = 0.58
 
 
 def _safe_float(value):
@@ -78,6 +77,12 @@ def final_signal(symbol="BTC-SWAP-USDT"):
     # window) ever produced a trade. Now either one aligning with
     # the overall weighted direction is enough.
     # =====================================================
+    # =====================================================
+    # HIGHER TIMEFRAME CONTEXT
+    # Now requires 1d AND 4h to agree on direction (both with
+    # quality >= MIN_QUALITY) - previously either one was enough,
+    # which let too many marginal setups through.
+    # =====================================================
     daily = results.get("1d", {})
     four_hour = results.get("4h", {})
     daily_signal = daily.get("signal", "NO TRADE")
@@ -86,12 +91,12 @@ def final_signal(symbol="BTC-SWAP-USDT"):
     four_hour_quality = _safe_float(four_hour.get("quality", 0))
 
     higher_tf_long = (
-        (daily_signal == "LONG" and daily_quality >= MIN_QUALITY)
-        or (four_hour_signal == "LONG" and four_hour_quality >= MIN_QUALITY)
+        daily_signal == "LONG" and four_hour_signal == "LONG"
+        and daily_quality >= MIN_QUALITY and four_hour_quality >= MIN_QUALITY
     )
     higher_tf_short = (
-        (daily_signal == "SHORT" and daily_quality >= MIN_QUALITY)
-        or (four_hour_signal == "SHORT" and four_hour_quality >= MIN_QUALITY)
+        daily_signal == "SHORT" and four_hour_signal == "SHORT"
+        and daily_quality >= MIN_QUALITY and four_hour_quality >= MIN_QUALITY
     )
 
     # =====================================================
