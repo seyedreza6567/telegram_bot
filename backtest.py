@@ -45,9 +45,9 @@ MAX_HOLD_CANDLES = 100
 COST_R = 0.05
 MAX_SCORE = 15.0
 
-MIN_QUALITY = 0.60
+MIN_QUALITY = 0.62
 MIN_LOWER_CONFIRMATIONS = 2
-MIN_DIRECTIONAL_RATIO = 0.55
+MIN_DIRECTIONAL_RATIO = 0.58
 
 
 # =========================================================
@@ -202,12 +202,12 @@ def build_final_signal(results):
     four_hour_quality = safe_float(four_hour.get("quality", 0)) or 0
 
     higher_tf_long = (
-        (daily_signal == "LONG" and daily_quality >= MIN_QUALITY)
-        or (four_hour_signal == "LONG" and four_hour_quality >= MIN_QUALITY)
+        daily_signal == "LONG" and four_hour_signal == "LONG"
+        and daily_quality >= MIN_QUALITY and four_hour_quality >= MIN_QUALITY
     )
     higher_tf_short = (
-        (daily_signal == "SHORT" and daily_quality >= MIN_QUALITY)
-        or (four_hour_signal == "SHORT" and four_hour_quality >= MIN_QUALITY)
+        daily_signal == "SHORT" and four_hour_signal == "SHORT"
+        and daily_quality >= MIN_QUALITY and four_hour_quality >= MIN_QUALITY
     )
 
     lower_long_count = 0
