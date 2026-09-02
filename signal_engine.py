@@ -67,6 +67,12 @@ def final_signal(symbol="BTC-SWAP-USDT"):
         long_quality_ratio = 0.0
         short_quality_ratio = 0.0
 
+    # BUG FIX: bot.py's scan_market() sorts results by result["quality_margin"],
+    # but this key never existed in the return dict below (only backtest.py
+    # computed it) - so every symbol silently got 0 here and the "بهترین
+    # فرصت‌ها" ranking was actually just sorting by risk/reward, not quality.
+    quality_margin = abs(long_quality_ratio - short_quality_ratio)
+
     # =====================================================
     # HIGHER TIMEFRAME CONTEXT
     # FIX: previously required BOTH 1d AND 4h to already show the
@@ -198,6 +204,7 @@ def final_signal(symbol="BTC-SWAP-USDT"):
         "short_ratio": round(short_ratio, 3),
         "long_quality": round(long_quality_ratio, 4),
         "short_quality": round(short_quality_ratio, 4),
+        "quality_margin": round(quality_margin, 4),
         "long_count": long_count,
         "short_count": short_count,
         "lower_long_count": lower_long_count,
