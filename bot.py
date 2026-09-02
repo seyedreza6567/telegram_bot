@@ -7,6 +7,7 @@ from telegram.ext import (
     filters,
 )
 
+import config
 from config import BOT_TOKEN
 
 from scanner import (
@@ -16,6 +17,7 @@ from scanner import (
 
 from analysis_engine import analyze
 from signal_engine import final_signal
+import execution_engine
 
 
 SYMBOL = "BTC-SWAP-USDT"
@@ -900,13 +902,21 @@ async def messages(
 
     if text == "⚙️ تنظیمات":
 
+        auto_on = context.bot_data.get("auto_trade_enabled", False)
+
+        toggle_label = (
+            "🤖 خاموش کردن معاملات خودکار"
+            if auto_on else
+            "🤖 روشن کردن معاملات خودکار"
+        )
+
         keyboard = [
             ["🛡️ حالت محافظه‌کارانه"],
             ["🎯 تأیید ۴ از ۵"],
             ["📉 حد ضرر: ۲٪"],
             ["📈 حد سود: ۴٪"],
-            ["💰 ریسک هر معامله: ۱٪"],
-            ["🤖 معاملات خودکار: خاموش"],
+            [f"💰 ریسک هر معامله: {config.RISK_PERCENT:g}٪"],
+            [toggle_label],
             ["🔙 برگشت"]
         ]
 
@@ -915,12 +925,55 @@ async def messages(
             resize_keyboard=True
         )
 
+        status_line = (
+            f"🤖 معاملات خودکار: {'روشن ✅' if auto_on else 'خاموش ⛔'}\n"
+            f"⚙️ حالت اجرا: {config.TRADING_MODE}"
+        )
+
         await update.message.reply_text(
             "⚙️ تنظیمات ربات\n\n"
-            "🛡️ حالت محافظه‌کارانه فعال است.\n\n"
+            "🛡️ حالت محافظه‌کارانه فعال است.\n"
+            f"{status_line}\n\n"
             "تنظیم موردنظر را انتخاب کن:",
             reply_markup=reply_markup
         )
+
+        return
+
+    # =====================================================
+    # روشن/خاموش کردن معاملات خودکار
+    # =====================================================
+
+    if text in [
+        "🤖 روشن کردن معاملات خودکار",
+        "🤖 خاموش کردن معاملات خودکار"
+    ]:
+
+        turning_on = text == "🤖 روشن کردن معاملات خودکار"
+
+        context.bot_data["auto_trade_enabled"] = turning_on
+        context.bot_data["owner_chat_id"] = update.effective_chat.id
+
+        if turning_on:
+            mode_note = (
+                "⚠️ حالت فعلی LIVE است — معاملات واقعی با پول واقعی انجام می‌شود!"
+                if config.TRADING_MODE == "LIVE" else
+                "ℹ️ حالت فعلی PAPER است — فقط شبیه‌سازی، بدون پول واقعی."
+            )
+            await update.message.reply_text(
+                "🤖 معاملات خودکار روشن شد.\n\n"
+                f"{mode_note}\n\n"
+                f"⏱️ اسکن هر {config.AUTO_SCAN_MINUTES} دقیقه انجام می‌شود.\n"
+                f"💰 ریسک هر معامله: {config.RISK_PERCENT:g}٪ موجودی.\n\n"
+                "⚠️ توجه: اگر ربات ری‌استارت شود، این وضعیت خاموش می‌شود "
+                "(برای امنیت، پیش‌فرض همیشه خاموش است) و باید دوباره روشنش کنی."
+            )
+        else:
+            await update.message.reply_text(
+                "🤖 معاملات خودکار خاموش شد.\n\n"
+                "پوزیشن‌های باز فعلی بسته نمی‌شوند، فقط سیگنال جدیدی "
+                "به‌صورت خودکار باز نخواهد شد."
+            )
 
         return
 
@@ -936,6 +989,123 @@ async def messages(
         )
 
         return
+
+
+# =========================================================
+# اسکن خودکار + معاملات خودکار (JobQueue)
+#
+# قبلاً execution_engine.py و toobit_client.py آماده بودند اما هیچ‌کجا
+# صدا زده نمی‌شدند - بات فقط سیگنال نشان می‌داد و خودش هیچ پوزیشنی باز
+# نمی‌کرد. این تابع آن حلقه‌ی گمشده است: با فاصله‌ی زمانی
+# config.AUTO_SCAN_MINUTES دقیقه اجرا می‌شود، اول پوزیشن‌های بسته‌شده
+# را بررسی و اطلاع‌رسانی می‌کند (sync_positions)، سپس هر نماد از
+# PRIORITY_SYMBOLS را با همان final_signal() بررسی می‌کند و در صورت
+# سیگنال معتبر، execution_engine.execute_signal() را صدا می‌زند.
+# =========================================================
+
+async def auto_trade_job(
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    if not context.bot_data.get(
+        "auto_trade_enabled",
+        False
+    ):
+        return
+
+    chat_id = context.bot_data.get("owner_chat_id")
+
+    # ---- بستن پوزیشن‌های شناسایی‌شده ----
+    try:
+        closed = execution_engine.sync_positions()
+    except Exception as e:
+        print("AUTO-TRADE sync_positions ERROR:", e)
+        closed = []
+
+    for item in closed:
+        if not chat_id:
+            continue
+        name = item["symbol"].replace("-SWAP-USDT", "")
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"📪 پوزیشن {name} بسته شد — نتیجه: {item['result']}"
+            )
+        except Exception as e:
+            print("AUTO-TRADE notify-closed ERROR:", e)
+
+    # ---- بررسی نمادهای مهم برای سیگنال جدید ----
+    try:
+        available_symbols = get_filtered_futures_symbols()
+    except Exception as e:
+        print("AUTO-TRADE symbol-list ERROR:", e)
+        return
+
+    for symbol in PRIORITY_SYMBOLS:
+
+        if symbol not in available_symbols:
+            continue
+
+        try:
+            result = final_signal(symbol)
+        except Exception as e:
+            print(f"AUTO-TRADE signal ERROR {symbol}: {e}")
+            continue
+
+        signal = result.get("signal", "NO TRADE")
+
+        if signal not in ["LONG", "SHORT"]:
+            continue
+
+        risk = result.get("risk", {})
+
+        if not risk.get("valid"):
+            continue
+
+        entry = risk.get("entry_price")
+        stop_loss = risk.get("stop_loss")
+        take_profit = risk.get("take_profit")
+
+        if entry is None or stop_loss is None or take_profit is None:
+            continue
+
+        try:
+            trade = execution_engine.execute_signal(
+                symbol=symbol,
+                signal=signal,
+                entry=entry,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+            )
+        except execution_engine.ExecutionError as e:
+            # پوزیشن باز از قبل، حجم خیلی کوچک، و... - نیازی به اطلاع نیست
+            print(f"AUTO-TRADE skip {symbol}: {e}")
+            continue
+        except Exception as e:
+            print(f"AUTO-TRADE unexpected ERROR {symbol}: {e}")
+            continue
+
+        if not chat_id:
+            continue
+
+        name = symbol.replace("-SWAP-USDT", "")
+        emoji = "🟢" if signal == "LONG" else "🔴"
+
+        try:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"{emoji} پوزیشن خودکار باز شد — {name}\n\n"
+                    f"حالت: {trade['mode']}\n"
+                    f"سیگنال: {signal}\n"
+                    f"مقدار: {trade['quantity']}\n"
+                    f"📍 Entry: {entry}\n"
+                    f"🛑 Stop Loss: {stop_loss}\n"
+                    f"🎯 Take Profit: {take_profit}"
+                )
+            )
+        except Exception as e:
+            print("AUTO-TRADE notify-open ERROR:", e)
 
 
 # =========================================================
@@ -963,6 +1133,22 @@ def main():
             messages
         )
     )
+
+    if application.job_queue is not None:
+
+        application.job_queue.run_repeating(
+            auto_trade_job,
+            interval=config.AUTO_SCAN_MINUTES * 60,
+            first=15,
+        )
+
+    else:
+        # requirements.txt باید python-telegram-bot[job-queue] باشد
+        # وگرنه JobQueue اصلاً ساخته نمی‌شود و معاملات خودکار کار نمی‌کند.
+        print(
+            "⚠️ JobQueue در دسترس نیست - پکیج APScheduler نصب نشده. "
+            "requirements.txt را چک کن: python-telegram-bot[job-queue]"
+        )
 
     print(
         "🤖 Bot is starting..."
