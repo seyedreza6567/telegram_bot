@@ -70,6 +70,67 @@ def _signed_request(endpoint: str, params: dict = None, method: str = "GET"):
 
 
 # =========================================================
+# Exchange info / symbol filters
+# =========================================================
+
+_SYMBOL_FILTERS_CACHE = {}
+
+# Conservative fallback if a symbol's real filters can't be read
+# (e.g. exchangeInfo shape differs from what we parse below). Better
+# to size small than to guess a step too big and blow past the
+# intended risk.
+_FALLBACK_STEP_SIZE = 0.001
+_FALLBACK_MIN_QTY = 0.001
+
+
+def get_exchange_info():
+    """Unsigned/public endpoint - contract list, status, filters."""
+    r = requests.get(f"{BASE_URL}/api/v1/exchangeInfo", timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_symbol_filters(symbol: str) -> dict:
+    """
+    Returns {"step_size": float, "min_qty": float} for a symbol,
+    parsed from Toobit's /api/v1/exchangeInfo LOT_SIZE-style filter.
+
+    NOTE: field names here (filterType/stepSize/minQty) follow the
+    common Binance-style futures API convention Toobit's docs are
+    modeled on. If Toobit's real response uses different field
+    names, this silently falls back to the conservative defaults
+    above instead of crashing - verify against a live response
+    before trusting this for LIVE-mode sizing on low-price/high-
+    quantity coins.
+    """
+    if symbol in _SYMBOL_FILTERS_CACHE:
+        return _SYMBOL_FILTERS_CACHE[symbol]
+
+    step_size = _FALLBACK_STEP_SIZE
+    min_qty = _FALLBACK_MIN_QTY
+
+    try:
+        data = get_exchange_info()
+        for contract in data.get("contracts", []):
+            if contract.get("symbol") != symbol:
+                continue
+            for f in contract.get("filters", []):
+                filter_type = str(f.get("filterType", "")).upper()
+                if filter_type in ("LOT_SIZE", "MARKET_LOT_SIZE"):
+                    if f.get("stepSize"):
+                        step_size = float(f["stepSize"])
+                    if f.get("minQty"):
+                        min_qty = float(f["minQty"])
+            break
+    except Exception as e:
+        print(f"WARN get_symbol_filters({symbol}) falling back to defaults: {e}")
+
+    result = {"step_size": step_size, "min_qty": min_qty}
+    _SYMBOL_FILTERS_CACHE[symbol] = result
+    return result
+
+
+# =========================================================
 # Account
 # =========================================================
 
