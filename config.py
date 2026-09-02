@@ -22,3 +22,9 @@ if TRADING_MODE not in ("PAPER", "LIVE"):
 
 # % of available USDT balance risked per trade (full stop-loss hit).
 RISK_PERCENT = float(os.getenv("RISK_PERCENT", "2.0"))
+
+# How often (minutes) the bot re-scans PRIORITY_SYMBOLS for auto-trading
+# when the "🤖 معاملات خودکار" toggle is on. Matches the smallest scan
+# timeframe (1h candles), scanned a few times an hour so a fresh signal
+# isn't missed for too long without hammering the API.
+AUTO_SCAN_MINUTES = int(os.getenv("AUTO_SCAN_MINUTES", "15"))
