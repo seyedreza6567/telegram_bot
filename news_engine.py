@@ -1,24 +1,31 @@
 """
 news_engine.py
 ---------------
-Free crypto news fetcher using public RSS feeds (no API key required).
+Free crypto news engine using public RSS feeds.
 
-Sources: CoinDesk, Cointelegraph, Decrypt, Bitcoin Magazine.
-Uses feedparser to pull latest headlines and filters them by symbol/keyword
-so the bot can check for relevant news before confirming a trade signal.
+Sources:
+- CoinDesk
+- Cointelegraph
+- Decrypt
+- Bitcoin Magazine
 
-Install requirement (already added to requirements.txt):
-    feedparser
+No API key required.
 """
 
 import feedparser
 import time
 import logging
+import re
 from datetime import datetime, timezone
+
 
 logger = logging.getLogger(__name__)
 
-# Free public RSS feeds - no auth token needed
+
+# =========================================================
+# RSS FEEDS
+# =========================================================
+
 RSS_FEEDS = {
     "coindesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "cointelegraph": "https://cointelegraph.com/rss",
@@ -26,114 +33,1075 @@ RSS_FEEDS = {
     "bitcoinmagazine": "https://bitcoinmagazine.com/feed",
 }
 
-# Simple cache to avoid re-fetching every call (news doesn't change every second)
-_cache = {"timestamp": 0, "entries": []}
-CACHE_TTL_SECONDS = 300  # 5 minutes
+
+# =========================================================
+# CACHE
+# =========================================================
+
+_cache = {
+    "timestamp": 0,
+    "entries": []
+}
+
+CACHE_TTL_SECONDS = 300
 
 
-def _fetch_all_feeds():
-    """Fetch and merge entries from all RSS feeds."""
-    all_entries = []
-    for source_name, url in RSS_FEEDS.items():
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries:
-                published = entry.get("published_parsed") or entry.get("updated_parsed")
-                published_dt = (
-                    datetime(*published[:6], tzinfo=timezone.utc) if published else None
-                )
-                all_entries.append({
-                    "source": source_name,
-                    "title": entry.get("title", ""),
-                    "summary": entry.get("summary", ""),
-                    "link": entry.get("link", ""),
-                    "published": published_dt,
-                })
-        except Exception as e:
-            logger.warning(f"Failed to fetch RSS feed {source_name}: {e}")
-    return all_entries
+# =========================================================
+# SYMBOL KEYWORDS
+# =========================================================
 
-
-def get_latest_news(force_refresh: bool = False):
-    """Return cached (or freshly fetched) list of news entries from all feeds."""
-    now = time.time()
-    if force_refresh or (now - _cache["timestamp"] > CACHE_TTL_SECONDS):
-        _cache["entries"] = _fetch_all_feeds()
-        _cache["timestamp"] = now
-    return _cache["entries"]
-
-
-# Map common trading symbols to keywords to match against news titles/summaries
 SYMBOL_KEYWORDS = {
-    "BTC": ["bitcoin", "btc"],
-    "ETH": ["ethereum", "eth"],
-    "BNB": ["binance", "bnb"],
-    "SOL": ["solana", "sol"],
-    "XRP": ["ripple", "xrp"],
-    "DOGE": ["dogecoin", "doge"],
-    "ADA": ["cardano", "ada"],
-    "AVAX": ["avalanche", "avax"],
-    "LINK": ["chainlink", "link"],
-    "DOT": ["polkadot", "dot"],
-    "LTC": ["litecoin", "ltc"],
-    "BCH": ["bitcoin cash", "bch"],
-    "UNI": ["uniswap", "uni"],
-    "SUI": ["sui"],
-    "TRX": ["tron", "trx"],
+    "BTC": [
+        "bitcoin",
+        "btc"
+    ],
+
+    "ETH": [
+        "ethereum",
+        "ether",
+        "eth"
+    ],
+
+    "BNB": [
+        "binance coin",
+        "bnb"
+    ],
+
+    "SOL": [
+        "solana",
+        "sol"
+    ],
+
+    "XRP": [
+        "ripple",
+        "xrp"
+    ],
+
+    "DOGE": [
+        "dogecoin",
+        "doge"
+    ],
+
+    "ADA": [
+        "cardano",
+        "ada"
+    ],
+
+    "AVAX": [
+        "avalanche",
+        "avax"
+    ],
+
+    "LINK": [
+        "chainlink",
+        "link"
+    ],
+
+    "DOT": [
+        "polkadot",
+        "dot"
+    ],
+
+    "LTC": [
+        "litecoin",
+        "ltc"
+    ],
+
+    "BCH": [
+        "bitcoin cash",
+        "bch"
+    ],
+
+    "UNI": [
+        "uniswap",
+        "uni"
+    ],
+
+    "SUI": [
+        "sui"
+    ],
+
+    "TRX": [
+        "tron",
+        "trx"
+    ],
 }
 
 
-def get_symbol_news(symbol: str, max_items: int = 5, max_age_hours: int = 24):
+# =========================================================
+# NEGATIVE NEWS KEYWORDS
+# =========================================================
+
+NEGATIVE_KEYWORDS = [
+    "hack",
+    "hacked",
+    "hacking",
+    "exploit",
+    "exploited",
+    "security breach",
+    "breach",
+    "lawsuit",
+    "sued",
+    "sec charges",
+    "sec charged",
+    "sec lawsuit",
+    "ban",
+    "banned",
+    "regulatory crackdown",
+    "crackdown",
+    "crash",
+    "collapse",
+    "delist",
+    "delisted",
+    "delisting",
+    "rug pull",
+    "scam",
+    "fraud",
+    "fraudulent",
+    "investigation",
+    "investigated",
+    "seized",
+    "seizure",
+    "outage",
+    "halt",
+    "halted",
+    "insolvency",
+    "insolvent",
+    "bankruptcy",
+    "bankrupt",
+    "stolen",
+    "stolen funds",
+    "attack",
+    "attacked",
+    "vulnerability",
+    "vulnerable",
+]
+
+
+# =========================================================
+# POSITIVE NEWS KEYWORDS
+# =========================================================
+
+POSITIVE_KEYWORDS = [
+    "approval",
+    "approved",
+    "etf approval",
+    "etf approved",
+    "partnership",
+    "partnered",
+    "adoption",
+    "adopted",
+    "launch",
+    "launched",
+    "integration",
+    "integrated",
+    "upgrade",
+    "upgraded",
+    "bullish",
+    "surge",
+    "rally",
+    "record high",
+    "all-time high",
+    "ath",
+    "institutional buying",
+    "institutional adoption",
+    "inflows",
+    "investment",
+    "invested",
+    "funding",
+    "major partnership",
+]
+
+
+# =========================================================
+# TEXT NORMALIZATION
+# =========================================================
+
+def _normalize_text(text):
     """
-    Return recent news entries relevant to a given trading symbol
-    (e.g. "BTCUSDT" or "BTC").
+    Normalize text for keyword matching.
     """
-    base_symbol = symbol.upper().replace("USDT", "").replace("USD", "")
-    keywords = SYMBOL_KEYWORDS.get(base_symbol, [base_symbol.lower()])
+
+    if text is None:
+        return ""
+
+    text = str(text).lower()
+
+    # Remove HTML tags
+    text = re.sub(
+        r"<[^>]+>",
+        " ",
+        text
+    )
+
+    # Normalize whitespace
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
+
+    return text.strip()
+
+
+# =========================================================
+# SYMBOL NORMALIZATION
+# =========================================================
+
+def _normalize_symbol(symbol):
+    """
+    Convert exchange symbols into base symbols.
+
+    Examples:
+
+    BTC
+    BTCUSDT
+    BTC-USD
+    BTC-USDT
+    BTC-SWAP-USDT
+    ETH-SWAP-USDT
+
+    -> BTC
+    -> ETH
+    """
+
+    if symbol is None:
+        return ""
+
+    symbol = str(
+        symbol
+    ).upper().strip()
+
+    # -----------------------------------------------------
+    # Toobit futures format
+    # BTC-SWAP-USDT
+    # -----------------------------------------------------
+
+    if "-SWAP-" in symbol:
+
+        base = symbol.split(
+            "-SWAP-",
+            1
+        )[0]
+
+        return base.strip("-").upper()
+
+    # -----------------------------------------------------
+    # Other common formats
+    # -----------------------------------------------------
+
+    suffixes = [
+        "-USDT",
+        "-USD",
+        "-USDC",
+        "_USDT",
+        "_USD",
+        "_USDC",
+    ]
+
+    for suffix in suffixes:
+
+        if symbol.endswith(suffix):
+
+            symbol = symbol[
+                :-len(suffix)
+            ]
+
+            break
+
+    # -----------------------------------------------------
+    # Remove remaining separators
+    # -----------------------------------------------------
+
+    symbol = symbol.replace(
+        "USDT",
+        ""
+    )
+
+    symbol = symbol.replace(
+        "USDC",
+        ""
+    )
+
+    symbol = symbol.replace(
+        "USD",
+        ""
+    )
+
+    symbol = symbol.replace(
+        "-",
+        ""
+    )
+
+    symbol = symbol.replace(
+        "_",
+        ""
+    )
+
+    return symbol.strip().upper()
+
+
+# =========================================================
+# FETCH ALL RSS FEEDS
+# =========================================================
+
+def _fetch_all_feeds():
+    """
+    Fetch and merge RSS entries from all sources.
+    """
+
+    all_entries = []
+
+    for source_name, url in RSS_FEEDS.items():
+
+        try:
+
+            feed = feedparser.parse(
+                url
+            )
+
+            if getattr(
+                feed,
+                "bozo",
+                False
+            ):
+
+                logger.warning(
+                    "RSS warning: %s",
+                    source_name
+                )
+
+            for entry in feed.entries:
+
+                published = (
+                    entry.get(
+                        "published_parsed"
+                    )
+                    or
+                    entry.get(
+                        "updated_parsed"
+                    )
+                )
+
+                published_dt = None
+
+                if published:
+
+                    try:
+
+                        published_dt = datetime(
+                            *published[:6],
+                            tzinfo=timezone.utc
+                        )
+
+                    except Exception:
+
+                        published_dt = None
+
+                title = entry.get(
+                    "title",
+                    ""
+                )
+
+                summary = entry.get(
+                    "summary",
+                    ""
+                )
+
+                link = entry.get(
+                    "link",
+                    ""
+                )
+
+                all_entries.append({
+
+                    "source":
+                        source_name,
+
+                    "title":
+                        title,
+
+                    "summary":
+                        summary,
+
+                    "link":
+                        link,
+
+                    "published":
+                        published_dt
+                })
+
+        except Exception as e:
+
+            logger.warning(
+                "Failed to fetch RSS feed %s: %s",
+                source_name,
+                e
+            )
+
+    return all_entries
+
+
+# =========================================================
+# GET LATEST NEWS
+# =========================================================
+
+def get_latest_news(
+    force_refresh=False
+):
+    """
+    Return cached news or refresh RSS feeds.
+    """
+
+    now = time.time()
+
+    cache_expired = (
+        now - _cache["timestamp"]
+        > CACHE_TTL_SECONDS
+    )
+
+    if (
+        force_refresh
+        or
+        cache_expired
+    ):
+
+        entries = _fetch_all_feeds()
+
+        _cache["entries"] = entries
+
+        _cache["timestamp"] = now
+
+    return _cache["entries"]
+
+
+# =========================================================
+# MATCH SYMBOL NEWS
+# =========================================================
+
+def get_symbol_news(
+    symbol,
+    max_items=5,
+    max_age_hours=24
+):
+    """
+    Return recent news relevant to the trading symbol.
+
+    Supports Toobit symbols such as:
+
+        BTC-SWAP-USDT
+        ETH-SWAP-USDT
+        SOL-SWAP-USDT
+    """
+
+    base_symbol = _normalize_symbol(
+        symbol
+    )
+
+    if not base_symbol:
+
+        return []
+
+    keywords = SYMBOL_KEYWORDS.get(
+        base_symbol,
+        [base_symbol.lower()]
+    )
 
     entries = get_latest_news()
-    now = datetime.now(timezone.utc)
+
+    now = datetime.now(
+        timezone.utc
+    )
+
     matched = []
 
     for entry in entries:
-        text = (entry["title"] + " " + entry["summary"]).lower()
-        if any(kw in text for kw in keywords):
-            if entry["published"]:
-                age_hours = (now - entry["published"]).total_seconds() / 3600
+
+        title = _normalize_text(
+            entry.get(
+                "title",
+                ""
+            )
+        )
+
+        summary = _normalize_text(
+            entry.get(
+                "summary",
+                ""
+            )
+        )
+
+        text = (
+            title
+            + " "
+            + summary
+        )
+
+        # -------------------------------------------------
+        # Symbol matching
+        # -------------------------------------------------
+
+        symbol_found = False
+
+        for keyword in keywords:
+
+            keyword = _normalize_text(
+                keyword
+            )
+
+            if not keyword:
+                continue
+
+            # Word-aware matching
+            pattern = (
+                r"(?<![a-z0-9])"
+                + re.escape(keyword)
+                + r"(?![a-z0-9])"
+            )
+
+            if re.search(
+                pattern,
+                text
+            ):
+
+                symbol_found = True
+                break
+
+        if not symbol_found:
+            continue
+
+        # -------------------------------------------------
+        # Age filter
+        # -------------------------------------------------
+
+        published = entry.get(
+            "published"
+        )
+
+        if published:
+
+            try:
+
+                age_hours = (
+                    now - published
+                ).total_seconds() / 3600
+
+                # Ignore old news
                 if age_hours > max_age_hours:
                     continue
-            matched.append(entry)
 
-    matched.sort(key=lambda e: e["published"] or now, reverse=True)
-    return matched[:max_items]
+                # Ignore obviously malformed future dates
+                if age_hours < -1:
+                    continue
+
+            except Exception:
+
+                pass
+
+        matched.append(
+            entry
+        )
+
+    # -----------------------------------------------------
+    # Newest first
+    # -----------------------------------------------------
+
+    matched.sort(
+        key=lambda item:
+            item.get(
+                "published"
+            ) or now,
+        reverse=True
+    )
+
+    return matched[
+        :max_items
+    ]
 
 
-def has_negative_news_flag(symbol: str, negative_keywords=None):
+# =========================================================
+# NEGATIVE NEWS DETECTION
+# =========================================================
+
+def has_negative_news_flag(
+    symbol,
+    negative_keywords=None
+):
     """
-    Very lightweight heuristic: checks if any recent headline for the symbol
-    contains a keyword commonly associated with bearish/negative news
-    (hack, exploit, lawsuit, ban, crash, delist, etc).
-    Returns True if such a headline is found, along with the matching entry.
+    Detect recent bearish/negative news.
+
+    Returns:
+
+        (True, matching_entry)
+
+    or:
+
+        (False, None)
     """
+
     if negative_keywords is None:
-        negative_keywords = [
-            "hack", "exploit", "lawsuit", "sec charges", "ban", "banned",
-            "crash", "delist", "delisting", "rug pull", "scam", "fraud",
-            "investigation", "seized", "outage", "halt", "hacked",
-        ]
 
-    news_items = get_symbol_news(symbol, max_items=10, max_age_hours=24)
+        negative_keywords = (
+            NEGATIVE_KEYWORDS
+        )
+
+    news_items = get_symbol_news(
+        symbol,
+        max_items=10,
+        max_age_hours=24
+    )
+
     for item in news_items:
-        text = (item["title"] + " " + item["summary"]).lower()
-        for kw in negative_keywords:
-            if kw in text:
+
+        title = _normalize_text(
+            item.get(
+                "title",
+                ""
+            )
+        )
+
+        summary = _normalize_text(
+            item.get(
+                "summary",
+                ""
+            )
+        )
+
+        text = (
+            title
+            + " "
+            + summary
+        )
+
+        for keyword in negative_keywords:
+
+            if _normalize_text(
+                keyword
+            ) in text:
+
                 return True, item
+
     return False, None
 
 
+# =========================================================
+# POSITIVE NEWS DETECTION
+# =========================================================
+
+def has_positive_news_flag(
+    symbol,
+    positive_keywords=None
+):
+    """
+    Detect recent positive/bullish news.
+
+    Returns:
+
+        (True, matching_entry)
+
+    or:
+
+        (False, None)
+    """
+
+    if positive_keywords is None:
+
+        positive_keywords = (
+            POSITIVE_KEYWORDS
+        )
+
+    news_items = get_symbol_news(
+        symbol,
+        max_items=10,
+        max_age_hours=24
+    )
+
+    for item in news_items:
+
+        title = _normalize_text(
+            item.get(
+                "title",
+                ""
+            )
+        )
+
+        summary = _normalize_text(
+            item.get(
+                "summary",
+                ""
+            )
+        )
+
+        text = (
+            title
+            + " "
+            + summary
+        )
+
+        for keyword in positive_keywords:
+
+            if _normalize_text(
+                keyword
+            ) in text:
+
+                return True, item
+
+    return False, None
+
+
+# =========================================================
+# NEWS BIAS
+# =========================================================
+
+def get_news_bias(symbol):
+    """
+    Analyze recent news sentiment.
+
+    Output:
+
+    {
+        "available": True/False,
+        "label": "BULLISH"/"BEARISH"/"NEUTRAL",
+        "post_count": int
+    }
+
+    Important:
+
+    News does NOT create a trading signal by itself.
+
+    It only provides directional context.
+    """
+
+    result = {
+        "available": False,
+        "label": "NEUTRAL",
+        "post_count": 0
+    }
+
+    try:
+
+        news_items = get_symbol_news(
+            symbol,
+            max_items=10,
+            max_age_hours=24
+        )
+
+        if news_items is None:
+
+            return result
+
+        result["available"] = True
+
+        result["post_count"] = len(
+            news_items
+        )
+
+        if len(news_items) == 0:
+
+            return result
+
+        bearish_score = 0
+        bullish_score = 0
+
+        # -------------------------------------------------
+        # Analyze each article
+        # -------------------------------------------------
+
+        for item in news_items:
+
+            title = _normalize_text(
+                item.get(
+                    "title",
+                    ""
+                )
+            )
+
+            summary = _normalize_text(
+                item.get(
+                    "summary",
+                    ""
+                )
+            )
+
+            text = (
+                title
+                + " "
+                + summary
+            )
+
+            negative_hits = 0
+            positive_hits = 0
+
+            for keyword in NEGATIVE_KEYWORDS:
+
+                if _normalize_text(
+                    keyword
+                ) in text:
+
+                    negative_hits += 1
+
+            for keyword in POSITIVE_KEYWORDS:
+
+                if _normalize_text(
+                    keyword
+                ) in text:
+
+                    positive_hits += 1
+
+            # A clearly negative headline gets bearish weight.
+            if negative_hits > 0:
+                bearish_score += (
+                    min(
+                        negative_hits,
+                        3
+                    )
+                )
+
+            # Positive headline gets bullish weight.
+            if positive_hits > 0:
+                bullish_score += (
+                    min(
+                        positive_hits,
+                        3
+                    )
+                )
+
+        # -------------------------------------------------
+        # Final sentiment
+        # -------------------------------------------------
+
+        if (
+            bearish_score > bullish_score
+            and
+            bearish_score > 0
+        ):
+
+            result["label"] = "BEARISH"
+
+        elif (
+            bullish_score > bearish_score
+            and
+            bullish_score > 0
+        ):
+
+            result["label"] = "BULLISH"
+
+        else:
+
+            result["label"] = "NEUTRAL"
+
+    except Exception as e:
+
+        logger.warning(
+            "News bias failed for %s: %s",
+            symbol,
+            e
+        )
+
+        return {
+            "available": False,
+            "label": "NEUTRAL",
+            "post_count": 0
+        }
+
+    return result
+
+
+# =========================================================
+# NEUTRAL RESULT
+# =========================================================
+
+def neutral_result(
+    reason=None
+):
+    """
+    Safe neutral result.
+
+    Kept for compatibility with older
+    signal_engine versions.
+    """
+
+    result = {
+        "available": False,
+        "label": "NEUTRAL",
+        "post_count": 0
+    }
+
+    if reason:
+        result["reason"] = str(
+            reason
+        )
+
+    return result
+
+
+# =========================================================
+# SHOULD BLOCK SIGNAL
+# =========================================================
+
+def should_block(
+    signal,
+    news
+):
+    """
+    Decide whether news should block a technical signal.
+
+    Rules:
+
+        BEARISH + LONG
+            -> BLOCK
+
+        BEARISH + SHORT
+            -> ALLOW
+
+        BULLISH + SHORT
+            -> BLOCK
+
+        BULLISH + LONG
+            -> ALLOW
+
+        NEUTRAL
+            -> ALLOW
+
+    News NEVER creates a signal.
+    """
+
+    if not isinstance(
+        news,
+        dict
+    ):
+
+        return False
+
+    label = news.get(
+        "label",
+        "NEUTRAL"
+    )
+
+    signal = str(
+        signal
+    ).upper()
+
+    # -----------------------------------------------------
+    # Bearish news
+    # -----------------------------------------------------
+
+    if label == "BEARISH":
+
+        if signal == "LONG":
+            return True
+
+        if signal == "SHORT":
+            return False
+
+    # -----------------------------------------------------
+    # Bullish news
+    # -----------------------------------------------------
+
+    if label == "BULLISH":
+
+        if signal == "SHORT":
+            return True
+
+        if signal == "LONG":
+            return False
+
+    # -----------------------------------------------------
+    # Neutral
+    # -----------------------------------------------------
+
+    return False
+
+
+# =========================================================
+# MANUAL TEST
+# =========================================================
+
 if __name__ == "__main__":
-    # Quick manual test
-    logging.basicConfig(level=logging.INFO)
-    news = get_symbol_news("BTC")
-    for n in news:
-        print(f"[{n['source']}] {n['title']} -> {n['link']}")
+
+    logging.basicConfig(
+        level=logging.INFO
+    )
+
+    test_symbols = [
+        "BTC-SWAP-USDT",
+        "ETH-SWAP-USDT",
+        "SOL-SWAP-USDT"
+    ]
+
+    print()
+    print(
+        "========================================"
+    )
+    print(
+        "NEWS ENGINE TEST"
+    )
+    print(
+        "========================================"
+    )
+
+    # Force fresh RSS fetch for manual test
+    get_latest_news(
+        force_refresh=True
+    )
+
+    for symbol in test_symbols:
+
+        print()
+        print(
+            "----------------------------------------"
+        )
+
+        print(
+            "SYMBOL:",
+            symbol
+        )
+
+        normalized = _normalize_symbol(
+            symbol
+        )
+
+        print(
+            "BASE SYMBOL:",
+            normalized
+        )
+
+        news = get_symbol_news(
+            symbol,
+            max_items=5,
+            max_age_hours=24
+        )
+
+        print(
+            "POST COUNT:",
+            len(news)
+        )
+
+        bias = get_news_bias(
+            symbol
+        )
+
+        print(
+            "BIAS:",
+            bias
+        )
+
+        for item in news:
+
+            print(
+                f"[{item.get('source')}] "
+                f"{item.get('title')} "
+                f"-> "
+                f"{item.get('link')}"
+            )
+
+    print()
+    print(
+        "========================================"
+    )
+    print(
+        "NEWS ENGINE TEST FINISHED"
+    )
+    print(
+        "========================================"
+    )
