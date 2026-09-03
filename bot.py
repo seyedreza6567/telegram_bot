@@ -25,6 +25,13 @@ SYMBOL = "BTC-SWAP-USDT"
 
 # =========================================================
 # ارزهای مهم
+#
+# NOTE: DOT-SWAP-USDT removed after backtest showed it was the
+# largest net-negative symbol (62 trades, 46.77% win rate, -9.60R)
+# with a large enough sample size to trust the result. It's still
+# reachable manually via "📈 سیگنال‌ها" (scanner.py's priority list
+# is unchanged), it's just excluded from auto-scan/auto-trade and
+# the "بهترین فرصت‌ها" ranking.
 # =========================================================
 
 PRIORITY_SYMBOLS = [
@@ -38,7 +45,6 @@ PRIORITY_SYMBOLS = [
     "TRX-SWAP-USDT",
     "AVAX-SWAP-USDT",
     "LINK-SWAP-USDT",
-    "DOT-SWAP-USDT",
     "LTC-SWAP-USDT",
     "BCH-SWAP-USDT",
     "UNI-SWAP-USDT",
