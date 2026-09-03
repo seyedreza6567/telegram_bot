@@ -49,6 +49,70 @@ def calculate_atr(df, period=14):
 
 
 # =========================================================
+# ADX (Wilder's smoothing)
+# =========================================================
+def calculate_adx(df, period=14):
+    high = df["high"]
+    low = df["low"]
+    close = df["close"]
+
+    previous_high = high.shift(1)
+    previous_low = low.shift(1)
+    previous_close = close.shift(1)
+
+    up_move = high - previous_high
+    down_move = previous_low - low
+
+    plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+    minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+    tr1 = high - low
+    tr2 = (high - previous_close).abs()
+    tr3 = (low - previous_close).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr_wilder = true_range.ewm(alpha=1 / period, adjust=False).mean()
+
+    plus_dm_series = pd.Series(plus_dm, index=df.index)
+    minus_dm_series = pd.Series(minus_dm, index=df.index)
+
+    plus_dm_smooth = plus_dm_series.ewm(alpha=1 / period, adjust=False).mean()
+    minus_dm_smooth = minus_dm_series.ewm(alpha=1 / period, adjust=False).mean()
+
+    plus_di = 100 * (plus_dm_smooth / atr_wilder.replace(0, np.nan))
+    minus_di = 100 * (minus_dm_smooth / atr_wilder.replace(0, np.nan))
+
+    di_sum = (plus_di + minus_di).replace(0, np.nan)
+    dx = 100 * (plus_di - minus_di).abs() / di_sum
+    adx = dx.ewm(alpha=1 / period, adjust=False).mean()
+
+    return adx, plus_di, minus_di
+
+
+# =========================================================
+# OBV (On-Balance Volume)
+# =========================================================
+def calculate_obv(df):
+    close = df["close"]
+    volume = df["volume"]
+
+    direction = np.sign(close.diff()).fillna(0)
+    obv = (direction * volume).cumsum()
+    obv_ema = obv.ewm(span=20, adjust=False).mean()
+
+    return obv, obv_ema
+
+
+# =========================================================
+# SUPPORT / RESISTANCE (rolling swing high/low zone)
+# =========================================================
+def calculate_support_resistance(df, lookback=50):
+    resistance = df["high"].rolling(lookback).max()
+    support = df["low"].rolling(lookback).min()
+    return support, resistance
+
+
+# =========================================================
 # SAFE FLOAT
 # =========================================================
 def _safe_float(value):
@@ -77,9 +141,22 @@ def _no_trade(reason, price=None, atr=None, rsi=None, trend="NEUTRAL",
         "rsi": rsi,
         "trend": trend,
         "trend_strength": trend_strength,
-        "score_ratio": round(max(long_score, short_score) / 15.0, 4),
+        "score_ratio": round(max(long_score, short_score) / MAX_SCORE, 4),
         "reason": reason
     }
+
+
+# =========================================================
+# SETTINGS
+# =========================================================
+# Previous max theoretical score was 15 (trend/RSI/MACD/momentum/volume-spike).
+# Added: Support/Resistance (+2), OBV (+1), ADX (+2) => new max = 20.
+# Entry threshold rescaled to keep the same strictness ratio (~53%):
+# old: 8/15 = 0.533  ->  new: round(0.533 * 20) = 11
+MAX_SCORE = 20.0
+ENTRY_SCORE_THRESHOLD = 11
+MIN_SCORE_DIFFERENCE = 3
+TREND_GATE_CAP = 9  # was 7/15 -> rescaled to ~9/20
 
 
 # =========================================================
@@ -109,6 +186,9 @@ def analyze(df):
     df["macd"], df["macd_signal"], df["macd_hist"] = calculate_macd(close)
     df["atr"] = calculate_atr(df, 14)
     df["volume_avg"] = df["volume"].rolling(20).mean()
+    df["adx"], df["plus_di"], df["minus_di"] = calculate_adx(df, 14)
+    df["obv"], df["obv_ema"] = calculate_obv(df)
+    df["support"], df["resistance"] = calculate_support_resistance(df, 50)
 
     last = df.iloc[-1]
     previous = df.iloc[-2]
@@ -130,6 +210,11 @@ def analyze(df):
     previous5_close = _safe_float(previous5["close"])
     volume = _safe_float(last["volume"])
     volume_avg = _safe_float(last["volume_avg"])
+    adx = _safe_float(last["adx"])
+    obv = _safe_float(last["obv"])
+    obv_ema = _safe_float(last["obv_ema"])
+    support = _safe_float(last["support"])
+    resistance = _safe_float(last["resistance"])
 
     values = [price, ema20, ema50, ema200, rsi, atr, macd, macd_signal,
               macd_hist, previous_macd_hist, previous3_ema20,
@@ -140,6 +225,13 @@ def analyze(df):
 
     if atr <= 0:
         return _no_trade("ATR نامعتبر", price=price, atr=atr, rsi=rsi)
+
+    # ADX/OBV/S-R are treated as optional enhancers: if not yet available
+    # (e.g. early in the series) they simply contribute zero, they never
+    # block a signal on their own.
+    adx_valid = adx is not None
+    obv_valid = obv is not None and obv_ema is not None
+    sr_valid = support is not None and resistance is not None
 
     # =====================================================
     # TREND
@@ -160,7 +252,7 @@ def analyze(df):
     momentum = (price - previous5_close) / previous5_close
 
     # =====================================================
-    # SCORES (max theoretical = 15)
+    # SCORES (max theoretical = 20)
     # =====================================================
     long_score = 0
     short_score = 0
@@ -245,7 +337,7 @@ def analyze(df):
         short_score += 1
         short_reasons.append("مومنتوم منفی")
 
-    # VOLUME
+    # VOLUME SPIKE (existing simple check)
     volume_confirmation = (
         volume is not None and volume_avg is not None and volume_avg > 0
         and volume > volume_avg * 1.05
@@ -259,36 +351,93 @@ def analyze(df):
             short_reasons.append("حجم تأییدکننده")
 
     # =====================================================
+    # OBV (money-flow direction, independent of price-only momentum)
+    # =====================================================
+    if obv_valid:
+        if obv > obv_ema:
+            long_score += 1
+            long_reasons.append("OBV صعودی (جریان پول مثبت)")
+        elif obv < obv_ema:
+            short_score += 1
+            short_reasons.append("OBV نزولی (جریان پول منفی)")
+
+    # =====================================================
+    # ADX (trend-strength confirmation, direction-agnostic)
+    # =====================================================
+    if adx_valid:
+        if adx >= 20:
+            if long_trend:
+                long_score += 2
+                long_reasons.append(f"ADX قوی ({round(adx,1)})")
+            if short_trend:
+                short_score += 2
+                short_reasons.append(f"ADX قوی ({round(adx,1)})")
+        elif adx < 15:
+            # choppy / rangebound market - penalize both directions
+            long_score -= 2
+            short_score -= 2
+
+    # =====================================================
+    # SUPPORT / RESISTANCE (proximity in ATR units)
+    # =====================================================
+    if sr_valid and atr > 0:
+        distance_to_resistance = (resistance - price) / atr
+        distance_to_support = (price - support) / atr
+
+        # LONG: reward being near support (room to run up),
+        # penalize being right under a resistance wall.
+        if distance_to_support <= 1.5:
+            long_score += 2
+            long_reasons.append("نزدیک ناحیه حمایت")
+        if distance_to_resistance <= 1.0:
+            long_score -= 2
+            long_reasons.append("نزدیک ناحیه مقاومت (ریسک برخورد)")
+
+        # SHORT: reward being near resistance, penalize being
+        # right above a support floor.
+        if distance_to_resistance <= 1.5:
+            short_score += 2
+            short_reasons.append("نزدیک ناحیه مقاومت")
+        if distance_to_support <= 1.0:
+            short_score -= 2
+            short_reasons.append("نزدیک ناحیه حمایت (ریسک برخورد)")
+
+    # =====================================================
     # TREND GATE
     # =====================================================
     if not long_trend:
-        long_score = min(long_score, 7)
+        long_score = min(long_score, TREND_GATE_CAP)
     if not short_trend:
-        short_score = min(short_score, 7)
+        short_score = min(short_score, TREND_GATE_CAP)
 
     best_score = max(long_score, short_score)
     difference = abs(long_score - short_score)
-    score_ratio = best_score / 15.0
+    score_ratio = best_score / MAX_SCORE
 
     # =====================================================
     # LONG
     # =====================================================
-    if long_trend and long_score >= 8 and long_score > short_score and difference >= 2:
+    if (long_trend and long_score >= ENTRY_SCORE_THRESHOLD
+            and long_score > short_score and difference >= MIN_SCORE_DIFFERENCE):
         stop_loss = price - atr * 2.0
         tp1 = price + atr * 2.0
         tp2 = price + atr * 4.0
         return {
             "signal": "LONG",
             "score": long_score,
-            "confidence": min(100, 55 + long_score * 4),
+            "confidence": min(100, 55 + long_score * 3),
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
             "rsi": rsi,
             "atr": atr,
+            "adx": adx,
+            "obv": obv,
+            "support": support,
+            "resistance": resistance,
             "trend": "BULLISH",
             "trend_strength": trend_strength,
-            "score_ratio": round(long_score / 15.0, 4),
+            "score_ratio": round(long_score / MAX_SCORE, 4),
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
@@ -298,22 +447,27 @@ def analyze(df):
     # =====================================================
     # SHORT
     # =====================================================
-    if short_trend and short_score >= 8 and short_score > long_score and difference >= 2:
+    if (short_trend and short_score >= ENTRY_SCORE_THRESHOLD
+            and short_score > long_score and difference >= MIN_SCORE_DIFFERENCE):
         stop_loss = price + atr * 2.0
         tp1 = price - atr * 2.0
         tp2 = price - atr * 4.0
         return {
             "signal": "SHORT",
             "score": short_score,
-            "confidence": min(100, 55 + short_score * 4),
+            "confidence": min(100, 55 + short_score * 3),
             "long_score": long_score,
             "short_score": short_score,
             "price": price,
             "rsi": rsi,
             "atr": atr,
+            "adx": adx,
+            "obv": obv,
+            "support": support,
+            "resistance": resistance,
             "trend": "BEARISH",
             "trend_strength": trend_strength,
-            "score_ratio": round(short_score / 15.0, 4),
+            "score_ratio": round(short_score / MAX_SCORE, 4),
             "stop_loss": stop_loss,
             "tp1": tp1,
             "take_profit": tp2,
@@ -329,6 +483,10 @@ def analyze(df):
         "price": price,
         "rsi": rsi,
         "atr": atr,
+        "adx": adx,
+        "obv": obv,
+        "support": support,
+        "resistance": resistance,
         "trend": "BULLISH" if long_trend else "BEARISH" if short_trend else "NEUTRAL",
         "trend_strength": trend_strength,
         "score_ratio": round(score_ratio, 4),
