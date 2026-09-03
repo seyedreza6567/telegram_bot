@@ -36,6 +36,14 @@ TIMEFRAMES = {
     "1d": {"interval": "1d", "weight": 3.0},
 }
 
+# FIX: raised from 1000 -> 4000 candles per timeframe so the backtest
+# covers a much longer historical window (roughly ~166 days on 1h,
+# and up to ~11 years on 1d, though the exchange will simply return
+# whatever history it actually has if that's less). scanner.py already
+# paginates past the exchange's 1000-candle-per-request cap, so no
+# other file needs to change. Note: this means far more API requests
+# per symbol/timeframe, so a full run across all 15 symbols will take
+# noticeably longer than before.
 CANDLE_LIMIT = 4000
 MIN_ANALYSIS_CANDLES = 250
 SL_ATR = 2.0
