@@ -1,13 +1,15 @@
 from multi_timeframe import analyze_timeframes
 from risk_manager import calculate_risk
+import news_engine
+import config
 
 
 # =========================================================
 # SETTINGS
 # =========================================================
-MIN_QUALITY = 0.62
+MIN_QUALITY = 0.58
 MIN_LOWER_CONFIRMATIONS = 2
-MIN_DIRECTIONAL_RATIO = 0.58
+MIN_DIRECTIONAL_RATIO = 0.55
 
 
 def _safe_float(value):
@@ -67,27 +69,10 @@ def final_signal(symbol="BTC-SWAP-USDT"):
         long_quality_ratio = 0.0
         short_quality_ratio = 0.0
 
-    # BUG FIX: bot.py's scan_market() sorts results by result["quality_margin"],
-    # but this key never existed in the return dict below (only backtest.py
-    # computed it) - so every symbol silently got 0 here and the "بهترین
-    # فرصت‌ها" ranking was actually just sorting by risk/reward, not quality.
     quality_margin = abs(long_quality_ratio - short_quality_ratio)
 
     # =====================================================
     # HIGHER TIMEFRAME CONTEXT
-    # FIX: previously required BOTH 1d AND 4h to already show the
-    # same signal with quality >= 0.67 before anything else was even
-    # checked. That's asking two independent noisy classifiers to
-    # agree on the same candle, on top of everything else below -
-    # the actual reason only TRX (which trended hard the whole
-    # window) ever produced a trade. Now either one aligning with
-    # the overall weighted direction is enough.
-    # =====================================================
-    # =====================================================
-    # HIGHER TIMEFRAME CONTEXT
-    # Now requires 1d AND 4h to agree on direction (both with
-    # quality >= MIN_QUALITY) - previously either one was enough,
-    # which let too many marginal setups through.
     # =====================================================
     daily = results.get("1d", {})
     four_hour = results.get("4h", {})
@@ -107,8 +92,6 @@ def final_signal(symbol="BTC-SWAP-USDT"):
 
     # =====================================================
     # LOWER TIMEFRAME CONFIRMATION
-    # FIX: needed >=2 of 1h/2h/3h before; now 1 is enough as long as
-    # the overall weighted direction (long_ratio/short_ratio) agrees.
     # =====================================================
     lower_long_count = 0
     lower_short_count = 0
@@ -125,10 +108,6 @@ def final_signal(symbol="BTC-SWAP-USDT"):
 
     # =====================================================
     # FINAL DECISION
-    # FIX: dropped the redundant quality_margin / long_weight>short_weight
-    # / long_quality_ratio>short_quality_ratio checks - long_ratio and
-    # higher_tf_long/short already encode direction; stacking near-
-    # duplicate conditions on top just multiplied the odds of failure.
     # =====================================================
     final = "NO TRADE"
 
@@ -151,6 +130,26 @@ def final_signal(symbol="BTC-SWAP-USDT"):
 
     if final == "NO TRADE" and short_conditions:
         final = "SHORT"
+
+    # =====================================================
+    # NEWS FILTER
+    # Checks recent news sentiment (CryptoPanic) for the symbol's
+    # currency. Only used as a veto on top of the candle-based signal
+    # above - it can turn a LONG/SHORT into NO TRADE if the news is
+    # strongly against it, but it never creates a signal by itself.
+    # Fails safe: if the news API/key is unavailable, nothing changes.
+    # =====================================================
+    news = news_engine.neutral_result("غیرفعال")
+    news_blocked = False
+
+    if final in ["LONG", "SHORT"] and getattr(config, "NEWS_FILTER_ENABLED", True):
+        try:
+            news = news_engine.get_news_bias(symbol)
+            if news_engine.should_block(final, news):
+                news_blocked = True
+                final = "NO TRADE"
+        except Exception as e:
+            news = news_engine.neutral_result(f"خطای فیلتر خبر: {e}")
 
     # =====================================================
     # ENTRY
@@ -216,6 +215,8 @@ def final_signal(symbol="BTC-SWAP-USDT"):
         "entry_price": entry_price,
         "atr": atr,
         "risk": risk,
+        "news": news,
+        "news_blocked": news_blocked,
         "timeframes": results
     }
 
