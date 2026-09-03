@@ -17,17 +17,12 @@ RISK_PERCENT = float(os.getenv("RISK_PERCENT", "2.0"))
 AUTO_SCAN_MINUTES = int(os.getenv("AUTO_SCAN_MINUTES", "15"))
 
 # =========================================================
-# News filter (CryptoPanic)
+# News filter (free RSS-based, via news_engine.py)
 # =========================================================
-# Set CRYPTOPANIC_API_KEY in Railway (free account at cryptopanic.com).
-# If left unset, news_engine.py fails safe: it never blocks a signal,
-# it just reports news as "unavailable".
-CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY")
-
+# news_engine.py pulls from CoinDesk/Cointelegraph/Decrypt/Bitcoin
+# Magazine RSS feeds - no API key needed. If it fails to fetch for
+# any reason, it fails safe: it never blocks a signal, it just
+# reports news as "unavailable".
+#
 # Master on/off switch for letting news veto a candle-based signal.
 NEWS_FILTER_ENABLED = os.getenv("NEWS_FILTER_ENABLED", "true").lower() == "true"
-
-# How strongly news must disagree with the signal's direction (on a
-# -1..1 scale) before it vetoes the trade. Higher = only very lopsided
-# news blocks; lower = more cautious.
-NEWS_BLOCK_THRESHOLD = float(os.getenv("NEWS_BLOCK_THRESHOLD", "0.35"))
