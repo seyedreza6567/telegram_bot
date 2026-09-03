@@ -275,6 +275,12 @@ async def scan_market(
 
                 "risk_reward": risk_reward,
 
+                "news":
+                    result.get(
+                        "news",
+                        {}
+                    ),
+
                 "timeframes":
                     result.get(
                         "timeframes",
@@ -392,6 +398,22 @@ async def scan_market(
                 f"📊 Risk/Reward: "
                 f"1:{risk_reward}\n"
             )
+
+            news = item.get("news", {}) or {}
+
+            if news.get("available"):
+
+                news_emoji = {
+                    "BULLISH": "🟢",
+                    "BEARISH": "🔴",
+                    "NEUTRAL": "⚪",
+                }.get(news.get("label", "NEUTRAL"), "⚪")
+
+                message += (
+                    f"📰 اخبار: {news_emoji} "
+                    f"{news.get('label', 'NEUTRAL')} "
+                    f"({news.get('post_count', 0)} خبر)\n"
+                )
 
             message += "📊 "
 
@@ -1091,6 +1113,14 @@ async def auto_trade_job(
         name = symbol.replace("-SWAP-USDT", "")
         emoji = "🟢" if signal == "LONG" else "🔴"
 
+        news = result.get("news", {}) or {}
+        news_line = ""
+        if news.get("available"):
+            news_line = (
+                f"📰 اخبار: {news.get('label', 'NEUTRAL')} "
+                f"({news.get('post_count', 0)} خبر)\n"
+            )
+
         try:
             await context.bot.send_message(
                 chat_id=chat_id,
@@ -1101,7 +1131,8 @@ async def auto_trade_job(
                     f"مقدار: {trade['quantity']}\n"
                     f"📍 Entry: {entry}\n"
                     f"🛑 Stop Loss: {stop_loss}\n"
-                    f"🎯 Take Profit: {take_profit}"
+                    f"🎯 Take Profit: {take_profit}\n"
+                    f"{news_line}"
                 )
             )
         except Exception as e:
