@@ -143,14 +143,6 @@ def analyze(df):
 
     # =====================================================
     # TREND
-    # FIX: the previous version required price/EMA20/EMA50/EMA200 to be
-    # in *perfect* textbook alignment (long_trend / short_trend) before
-    # any score above 7 was even allowed through (see "TREND GATE"
-    # below). That's fine for an asset in a clean, sustained trend
-    # (which is why TRX kept clearing the bar) but almost never happens
-    # for most alts within a single scan, so 14/15 symbols never got a
-    # single signal. We now use a graded trend context instead of a
-    # hard pass/fail gate.
     # =====================================================
     ema_distance = abs(ema20 - ema50)
     trend_strength = ema_distance / atr
@@ -158,7 +150,7 @@ def analyze(df):
     long_trend = price > ema200 and ema20 > ema50
     short_trend = price < ema200 and ema20 < ema50
 
-    if trend_strength < 0.30:
+    if trend_strength < 0.26:
         return _no_trade("قدرت روند کافی نیست", price=price, atr=atr, rsi=rsi,
                           trend="WEAK", trend_strength=trend_strength)
 
@@ -268,9 +260,6 @@ def analyze(df):
 
     # =====================================================
     # TREND GATE
-    # FIX: soft cap (9 instead of 7) using the broader "context" check
-    # instead of the strict long_trend/short_trend flags, so a healthy
-    # (but not textbook-perfect) trend can still clear the entry bar.
     # =====================================================
     if not long_trend:
         long_score = min(long_score, 7)
@@ -283,11 +272,8 @@ def analyze(df):
 
     # =====================================================
     # LONG
-    # FIX: eligibility now uses long_context (price/EMA50 relationship)
-    # instead of the stricter long_trend, and the score bar is 8 (was 9)
-    # with the same score_gap safety margin of 2.
     # =====================================================
-    if long_trend and long_score >= 9 and long_score > short_score and difference >= 2:
+    if long_trend and long_score >= 8 and long_score > short_score and difference >= 2:
         stop_loss = price - atr * 2.0
         tp1 = price + atr * 2.0
         tp2 = price + atr * 4.0
@@ -312,7 +298,7 @@ def analyze(df):
     # =====================================================
     # SHORT
     # =====================================================
-    if short_trend and short_score >= 9 and short_score > long_score and difference >= 2:
+    if short_trend and short_score >= 8 and short_score > long_score and difference >= 2:
         stop_loss = price + atr * 2.0
         tp1 = price - atr * 2.0
         tp2 = price - atr * 4.0
