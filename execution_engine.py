@@ -33,6 +33,19 @@ class ExecutionError(Exception):
     pass
 
 
+class UnprotectedPositionError(Exception):
+    """
+    Raised only when a LIVE position was opened, its SL and/or TP
+    order placement failed, AND the emergency flatten attempt also
+    failed. This means a real, unprotected, untracked position may
+    still be open on the exchange and needs immediate manual
+    attention. Callers (bot.py) should treat this as high priority
+    and surface it to the user clearly, not just log-and-skip like
+    a normal ExecutionError.
+    """
+    pass
+
+
 def calculate_quantity(symbol: str, entry_price: float, stop_loss: float,
                         available_usdt: float, risk_percent: float = None) -> float:
     """
@@ -73,7 +86,7 @@ def calculate_quantity(symbol: str, entry_price: float, stop_loss: float,
 
     if quantity < min_qty:
         raise ExecutionError(
-            f"{symbol}: حجم محاسبه‌شده ({quantity}) کمتر از حداقل مجاز "
+            f"{symbol}: حجم محاسبهشده ({quantity}) کمتر از حداقل مجاز "
             f"صرافی ({min_qty}) است - با ریسک {risk_percent}% این معامله "
             f"قابل اجرا نیست، رد شد."
         )
@@ -85,7 +98,11 @@ def execute_signal(symbol: str, signal: str, entry: float, stop_loss: float, tak
     """
     signal: "LONG" or "SHORT"
     Returns a dict describing what happened (for the Telegram message).
-    Raises ExecutionError on anything that should block the trade.
+    Raises ExecutionError on anything that should block the trade
+    (rejected before any real order was sent).
+    Raises UnprotectedPositionError if a LIVE position was opened but
+    could not be protected with SL/TP AND could not be flattened -
+    this needs immediate manual attention.
     """
     if signal not in ("LONG", "SHORT"):
         raise ExecutionError("سیگنال نامعتبر است")
@@ -133,7 +150,7 @@ def execute_signal(symbol: str, signal: str, entry: float, stop_loss: float, tak
             "type": "PAPER_MARKET_OPEN",
             "side": open_side,
             "quantity": quantity,
-            "note": "شبیه‌سازی - هیچ درخواستی به Toobit ارسال نشد",
+            "note": "شبیهسازی - هیچ درخواستی به Toobit ارسال نشد",
         })
         position_tracker.open_position(symbol, {
             "signal": signal,
@@ -155,23 +172,86 @@ def execute_signal(symbol: str, signal: str, entry: float, stop_loss: float, tak
     )
     result["orders"].append({"type": "MARKET_OPEN", "response": open_order})
 
-    sl_order = toobit_client.place_stop_order(
-        symbol=symbol,
-        side=close_side,
-        quantity=str(quantity),
-        stop_price=stop_loss,
-        reduce_only=True,
-    )
-    result["orders"].append({"type": "STOP_LOSS", "response": sl_order})
+    # =====================================================
+    # CRITICAL FIX: previously, if placing the SL or TP order
+    # raised an exception, execute_signal() propagated it upward
+    # immediately - leaving the just-opened LIVE position on the
+    # exchange with NO stop-loss, NO take-profit, and never
+    # recorded in position_tracker (since open_position() was only
+    # called after both orders succeeded). That position would sit
+    # there completely unprotected and invisible to the bot's own
+    # bookkeeping until someone noticed manually.
+    #
+    # Now: if SL and/or TP placement fails, we immediately try to
+    # flatten (market-close) the position instead of leaving it
+    # open and unprotected. Only if that flatten attempt ALSO fails
+    # do we raise UnprotectedPositionError - a distinct, high-
+    # priority error the caller should surface loudly.
+    # =====================================================
+    try:
+        sl_order = toobit_client.place_stop_order(
+            symbol=symbol,
+            side=close_side,
+            quantity=str(quantity),
+            stop_price=stop_loss,
+            reduce_only=True,
+        )
+        result["orders"].append({"type": "STOP_LOSS", "response": sl_order})
 
-    tp_order = toobit_client.place_stop_order(
-        symbol=symbol,
-        side=close_side,
-        quantity=str(quantity),
-        stop_price=take_profit,
-        reduce_only=True,
-    )
-    result["orders"].append({"type": "TAKE_PROFIT", "response": tp_order})
+        tp_order = toobit_client.place_stop_order(
+            symbol=symbol,
+            side=close_side,
+            quantity=str(quantity),
+            stop_price=take_profit,
+            reduce_only=True,
+        )
+        result["orders"].append({"type": "TAKE_PROFIT", "response": tp_order})
+
+    except Exception as protection_error:
+        print(
+            f"CRITICAL {symbol}: SL/TP placement failed after market "
+            f"open ({protection_error}) - attempting emergency flatten"
+        )
+
+        try:
+            flatten_order = toobit_client.close_position_market(
+                symbol=symbol,
+                side=close_side,
+                quantity=str(quantity),
+            )
+            result["orders"].append({
+                "type": "EMERGENCY_FLATTEN",
+                "reason": str(protection_error),
+                "response": flatten_order,
+            })
+            # Position was opened then immediately flattened - never
+            # actually held, so it should NOT be tracked as open.
+            raise ExecutionError(
+                f"{symbol}: پوزیشن بهخاطر شکست ثبت حد ضرر/سود بلافاصله "
+                f"بسته شد (Flatten اضطراری موفق بود). جزئیات خطا: "
+                f"{protection_error}"
+            )
+
+        except ExecutionError:
+            raise
+
+        except Exception as flatten_error:
+            # Flatten itself failed too - this is the dangerous case.
+            # The position IS still open on the exchange, unprotected,
+            # and NOT in position_tracker. Surface this loudly.
+            print(
+                f"CRITICAL {symbol}: emergency flatten ALSO failed "
+                f"({flatten_error}) - position may still be open and "
+                f"UNPROTECTED on the exchange. Manual check required."
+            )
+            raise UnprotectedPositionError(
+                f"⚠ {symbol}: پوزیشن {signal} با حجم {quantity} باز شد "
+                f"اما ثبت حد ضرر/سود شکست خورد و تلاش برای بستن اضطراری "
+                f"هم ناموفق بود. این پوزیشن ممکن است هنوز روی صرافی باز "
+                f"و بدون محافظت باشد - فوراً بهصورت دستی چک کن.\n"
+                f"خطای اولیه: {protection_error}\n"
+                f"خطای Flatten: {flatten_error}"
+            ) from flatten_error
 
     position_tracker.open_position(symbol, {
         "signal": signal,
