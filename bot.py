@@ -1105,6 +1105,41 @@ async def auto_trade_job(
                 stop_loss=stop_loss,
                 take_profit=take_profit,
             )
+        except execution_engine.UnprotectedPositionError as e:
+            # موقعیت بحرانی: پوزیشن واقعی روی صرافی باز مانده اما
+            # SL/TP ثبت نشده و حتی بستن اضطراری هم ناموفق بوده.
+            # این باید همیشه فوراً و جدا از سایر خطاها اطلاع‌رسانی شود.
+            # (این except عمداً قبل از ExecutionError آمده تا صرف‌نظر از
+            # اینکه UnprotectedPositionError زیرکلاس آن باشد یا نه، همیشه
+            # اول گرفته شود.)
+            print(f"AUTO-TRADE *** UNPROTECTED POSITION *** {symbol}: {e}")
+
+            if chat_id:
+                try:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=(
+                            "🚨🚨🚨 هشدار بحرانی 🚨🚨🚨\n\n"
+                            f"پوزیشن {symbol.replace('-SWAP-USDT', '')} "
+                            "روی صرافی باز شده اما حد ضرر/حد سود ثبت نشد "
+                            "و تلاش برای بستن اضطراری آن هم ناموفق بود!\n\n"
+                            f"جزئیات فنی:\n{e}\n\n"
+                            "⚠️ این پوزیشن الان بدون هیچ محافظتی روی توبیت باز است.\n"
+                            "🔴 لطفاً همین الان به‌صورت دستی وارد اپ/سایت توبیت شو "
+                            "و این پوزیشن را بررسی و مدیریت کن."
+                        )
+                    )
+                except Exception as notify_err:
+                    print(
+                        "AUTO-TRADE FAILED TO SEND CRITICAL ALERT:",
+                        notify_err
+                    )
+            else:
+                print(
+                    "AUTO-TRADE CRITICAL ALERT NOT SENT - owner_chat_id not set!"
+                )
+
+            continue
         except execution_engine.ExecutionError as e:
             # پوزیشن باز از قبل، حجم خیلی کوچک، و... - نیازی به اطلاع نیست
             print(f"AUTO-TRADE skip {symbol}: {e}")
