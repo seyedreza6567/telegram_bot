@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from scanner import get_klines
-from analysis_engine import analyze
+from analysis_engine import analyze, MAX_SCORE as ANALYSIS_MAX_SCORE
 
 # =========================================================
 # SYMBOLS
@@ -51,7 +51,20 @@ TP1_ATR = 2.0
 TP2_ATR = 4.0
 MAX_HOLD_CANDLES = 100
 COST_R = 0.05
-MAX_SCORE = 15.0
+
+# FIX: this used to be a separate hardcoded 15.0, left over from
+# before analysis_engine.py added OBV/ADX/Support-Resistance and
+# rescaled its own max theoretical score to 20. That mismatch
+# silently clipped any score above 15 down to 15, then computed
+# quality = score/15 - inflating quality to 1.0 for many real
+# signals and loosening every MIN_QUALITY gate below without
+# anyone changing MIN_QUALITY itself. This is the exact same bug
+# that was found and fixed in multi_timeframe.py - backtest.py has
+# its own independent copy of this logic, so it needed the same
+# fix separately. Now sourced directly from analysis_engine.py so
+# the two can't drift apart again, and so backtest results actually
+# reflect the same quality math as the live bot.
+MAX_SCORE = ANALYSIS_MAX_SCORE
 
 MIN_QUALITY = 0.58
 MIN_LOWER_CONFIRMATIONS = 2
