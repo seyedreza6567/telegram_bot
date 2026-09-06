@@ -1,5 +1,5 @@
 from scanner import get_klines
-from analysis_engine import analyze
+from analysis_engine import analyze, MAX_SCORE as ANALYSIS_MAX_SCORE
 
 
 # =========================================================
@@ -22,7 +22,15 @@ TIMEFRAME_WEIGHTS = {
 CANDLE_LIMIT = 300
 MIN_CANDLES = 250
 
-MAX_SCORE = 15.0
+# FIX: this used to be a separate hardcoded 15.0, left over from
+# before analysis_engine.py added OBV/ADX/Support-Resistance and
+# rescaled its own max theoretical score to 20. That mismatch
+# silently clipped any score above 15 down to 15, then computed
+# quality = score/15 - inflating quality to 1.0 for many real
+# signals and loosening every MIN_QUALITY gate in signal_engine.py
+# without anyone changing MIN_QUALITY itself. Now sourced directly
+# from analysis_engine.py so the two can never drift apart again.
+MAX_SCORE = ANALYSIS_MAX_SCORE
 
 
 # =========================================================
