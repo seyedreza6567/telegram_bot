@@ -1,71 +1,91 @@
-"""
-position_tracker.py
-
-Lightweight local bookkeeping of which symbols currently have an
-open auto-trading position.
-
-Why this exists: execution_engine.execute_signal() previously only
-guarded against stacking a second position in LIVE mode (by asking
-Toobit directly). PAPER mode had NO such guard - if a signal stayed
-active across several scan cycles (which is normal; trends don't
-flip every 15 minutes), an automatic scan loop would "open" a brand
-new fake position every single cycle for as long as the signal
-persisted. This module fixes that for both modes, and also gives
-PAPER mode a way to notice its own simulated SL/TP being hit (Toobit
-has no record of a paper trade, so nothing else can tell us that).
-
-Persisted to a JSON file so a bot restart doesn't forget about open
-paper positions and double-open on the next scan.
-"""
-
 import json
 import os
 import threading
+from datetime import datetime, timezone
 
-_LOCK = threading.Lock()
-_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "open_positions.json")
+STORAGE_PATH = os.environ.get(
+    "POSITION_TRACKER_PATH",
+    "open_positions.json"
+)
+
+_lock = threading.Lock()
 
 
 def _load():
-    if not os.path.exists(_FILE):
+
+    if not os.path.exists(STORAGE_PATH):
         return {}
+
     try:
-        with open(_FILE, "r", encoding="utf-8") as f:
+        with open(STORAGE_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        print("POSITION_TRACKER load error:", e)
         return {}
 
 
 def _save(data):
-    with open(_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    try:
+        with open(STORAGE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("POSITION_TRACKER save error:", e)
 
 
-def is_open(symbol: str) -> bool:
-    with _LOCK:
-        return symbol in _load()
+def has_open_position(symbol):
 
-
-def get_position(symbol: str):
-    with _LOCK:
-        return _load().get(symbol)
-
-
-def open_position(symbol: str, info: dict):
-    with _LOCK:
+    with _lock:
         data = _load()
-        data[symbol] = info
+        return symbol in data
+
+
+def get_open_position(symbol):
+
+    with _lock:
+        data = _load()
+        return data.get(symbol)
+
+
+def get_all_open_positions():
+
+    with _lock:
+        return _load()
+
+
+def open_position(
+    symbol,
+    mode,
+    signal,
+    entry_price,
+    stop_loss,
+    take_profit,
+    quantity,
+):
+
+    with _lock:
+
+        data = _load()
+
+        data[symbol] = {
+            "mode": mode,
+            "signal": signal,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "quantity": quantity,
+            "opened_at": datetime.now(timezone.utc).isoformat(),
+        }
+
         _save(data)
 
 
-def close_position(symbol: str):
-    with _LOCK:
+def close_position(symbol):
+
+    with _lock:
+
         data = _load()
+
         if symbol in data:
-            data.pop(symbol)
+            del data[symbol]
             _save(data)
-
-
-def all_positions() -> dict:
-    with _LOCK:
-        return _load()
