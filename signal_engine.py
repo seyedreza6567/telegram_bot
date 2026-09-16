@@ -1,440 +1,205 @@
-from multi_timeframe import analyze_timeframes
-from risk_manager import calculate_risk
+from multi_timeframe import analyze_all_timeframes
+from risk_manager import build_risk
 import news_engine
-import config
 
 
 # =========================================================
-# SETTINGS
+# آستانه‌ها (نسخه سخت‌گیرانه نهایی)
+#
+# - روزانه (1d) و 4 ساعته (4h) باید هر دو هم‌جهت باشند.
+# - از سه تایم‌فریم پایین‌تر (1h/2h/3h) حداقل 2 تا باید
+#   هم‌جهت با سیگنال نهایی باشند.
+# - MIN_QUALITY و MIN_DIRECTIONAL_RATIO بر اساس
+#   MAX_SCORE=20 در analysis_engine.py محاسبه می‌شوند.
 # =========================================================
+
 MIN_QUALITY = 0.58
+
+MIN_DIRECTIONAL_RATIO = 0.58
+
 MIN_LOWER_CONFIRMATIONS = 2
-MIN_DIRECTIONAL_RATIO = 0.55
+
+LOWER_TIMEFRAMES = ["1h", "2h", "3h"]
+
+HIGH_TIMEFRAMES = ["4h", "1d"]
+
+ENTRY_TIMEFRAME = "4h"
 
 
-# =========================================================
-# SAFE FLOAT
-# =========================================================
-def _safe_float(value):
-    try:
-        return float(value)
-    except Exception:
-        return 0.0
-
-
-# =========================================================
-# NEWS ANALYSIS
-# =========================================================
-def _fetch_news_items(symbol):
+def _get_symbol_news(symbol):
     """
-    Calls news_engine.get_symbol_news() defensively.
-    Tries the (symbol, max_items, max_age_hours) signature first;
-    falls back to (symbol) only if news_engine.py doesn't accept
-    those extra keyword arguments. This avoids a silent TypeError
-    that would otherwise get swallowed and make news look
-    permanently "unavailable" with no clear reason.
+    فراخوانی دفاعی: اگر امضای واقعی news_engine.get_symbol_news
+    آرگومان‌های کلیدی max_items/max_age_hours را نپذیرد، به فراخوانی
+    ساده‌تر سقوط می‌کند تا فیچر اخبار هیچ‌وقت به‌خاطر ناهماهنگی
+    امضا، بی‌سروصدا از کار نیفتد.
     """
+
     try:
+
         return news_engine.get_symbol_news(
             symbol,
             max_items=10,
             max_age_hours=24
         )
+
     except TypeError:
-        return news_engine.get_symbol_news(symbol)
+
+        try:
+            return news_engine.get_symbol_news(symbol)
+        except Exception as e:
+            print(f"NEWS ERROR (fallback) {symbol}: {e}")
+            return {"available": False, "label": "NEUTRAL", "post_count": 0}
+
+    except Exception as e:
+
+        print(f"NEWS ERROR {symbol}: {e}")
+
+        return {"available": False, "label": "NEUTRAL", "post_count": 0}
 
 
-def _get_news_result(symbol):
-    """
-    Get recent news for the symbol.
-
-    Output:
-    {
-        "available": True/False,
-        "label": "BULLISH"/"BEARISH"/"NEUTRAL",
-        "post_count": int
-    }
-
-    Current news_engine can reliably identify negative news.
-    Absence of negative news is NOT treated as bullish.
-    """
-
-    result = {
-        "available": False,
-        "label": "NEUTRAL",
-        "post_count": 0
-    }
-
-    try:
-        news_items = _fetch_news_items(symbol)
-
-        if news_items is None:
-            return result
-
-        result["available"] = True
-        result["post_count"] = len(news_items)
-
-        if len(news_items) == 0:
-            return result
-
-        negative_keywords = [
-            "hack",
-            "hacked",
-            "exploit",
-            "lawsuit",
-            "sec charges",
-            "ban",
-            "banned",
-            "crash",
-            "delist",
-            "delisting",
-            "rug pull",
-            "scam",
-            "fraud",
-            "investigation",
-            "seized",
-            "outage",
-            "halt",
-        ]
-
-        negative_count = 0
-
-        for item in news_items:
-            title = str(item.get("title", ""))
-            summary = str(item.get("summary", ""))
-
-            text = (title + " " + summary).lower()
-
-            if any(keyword in text for keyword in negative_keywords):
-                negative_count += 1
-
-        if negative_count > 0:
-            result["label"] = "BEARISH"
-        else:
-            result["label"] = "NEUTRAL"
-
-    except Exception:
-        return {
-            "available": False,
-            "label": "NEUTRAL",
-            "post_count": 0
-        }
-
-    return result
-
-
-# =========================================================
-# NEWS FILTER
-# =========================================================
 def _news_blocks_signal(signal, news):
-    """
-    Negative news is bearish.
 
-    BEARISH + LONG  -> block LONG
-    BEARISH + SHORT -> allow SHORT
-
-    News never creates a signal by itself.
-    """
+    if not news or not news.get("available"):
+        return False
 
     label = news.get("label", "NEUTRAL")
 
-    if label == "BEARISH":
-        if signal == "LONG":
-            return True
-        if signal == "SHORT":
-            return False
+    # اخبار منفی فقط جلوی سیگنال‌های لانگ را می‌گیرد؛
+    # شورت مجاز باقی می‌ماند (اخبار بد با شورت هم‌جهت است).
+    if signal == "LONG" and label == "BEARISH":
+        return True
 
     return False
 
 
-# =========================================================
-# FINAL SIGNAL
-# =========================================================
-def final_signal(symbol="BTC-SWAP-USDT"):
+def final_signal(symbol):
 
-    results = analyze_timeframes(symbol)
+    timeframes = analyze_all_timeframes(symbol)
 
-    long_weight = 0.0
-    short_weight = 0.0
-
-    long_quality = 0.0
-    short_quality = 0.0
-
-    total_valid_weight = 0.0
-
-    long_count = 0
-    short_count = 0
-
-    # =====================================================
-    # TIMEFRAME ANALYSIS
-    # =====================================================
-    for timeframe, result in results.items():
-
-        signal = result.get("signal", "NO TRADE")
-        weight = _safe_float(result.get("weight", 0))
-        quality = _safe_float(result.get("quality", result.get("score_ratio", 0)))
-
-        if weight <= 0:
-            continue
-
-        if signal not in ["LONG", "SHORT"]:
-            continue
-
-        quality = max(0.0, min(quality, 1.0))
-
-        total_valid_weight += weight
-
-        if signal == "LONG":
-            long_count += 1
-            long_weight += weight
-            long_quality += (quality * weight)
-
-        elif signal == "SHORT":
-            short_count += 1
-            short_weight += weight
-            short_quality += (quality * weight)
-
-    # =====================================================
-    # WEIGHT RATIOS
-    # =====================================================
-    total_weight = sum(_safe_float(r.get("weight", 0)) for r in results.values())
-
-    if total_weight <= 0:
-        total_weight = 1.0
-
-    long_ratio = long_weight / total_weight
-    short_ratio = short_weight / total_weight
-
-    # =====================================================
-    # QUALITY
-    # =====================================================
-    if total_valid_weight > 0:
-        long_quality_ratio = long_quality / total_valid_weight
-        short_quality_ratio = short_quality / total_valid_weight
-    else:
-        long_quality_ratio = 0.0
-        short_quality_ratio = 0.0
-
-    quality_margin = abs(long_quality_ratio - short_quality_ratio)
-
-    # =====================================================
-    # HIGHER TIMEFRAME CONTEXT
-    # =====================================================
-    daily = results.get("1d", {})
-    four_hour = results.get("4h", {})
-
-    daily_signal = daily.get("signal", "NO TRADE")
-    four_hour_signal = four_hour.get("signal", "NO TRADE")
-
-    daily_quality = _safe_float(daily.get("quality", 0))
-    four_hour_quality = _safe_float(four_hour.get("quality", 0))
-
-    # =====================================================
-    # HIGHER TF LONG
-    # =====================================================
-    higher_tf_long = (
-        daily_signal == "LONG"
-        and four_hour_signal == "LONG"
-        and daily_quality >= MIN_QUALITY
-        and four_hour_quality >= MIN_QUALITY
-    )
-
-    # =====================================================
-    # HIGHER TF SHORT
-    # =====================================================
-    higher_tf_short = (
-        daily_signal == "SHORT"
-        and four_hour_signal == "SHORT"
-        and daily_quality >= MIN_QUALITY
-        and four_hour_quality >= MIN_QUALITY
-    )
-
-    # =====================================================
-    # LOWER TIMEFRAME CONFIRMATION
-    # =====================================================
-    lower_long_count = 0
-    lower_short_count = 0
-
-    for timeframe in ["1h", "2h", "3h"]:
-        result = results.get(timeframe, {})
-        signal = result.get("signal", "NO TRADE")
-        quality = _safe_float(result.get("quality", 0))
-
-        if signal == "LONG" and quality >= MIN_QUALITY:
-            lower_long_count += 1
-        elif signal == "SHORT" and quality >= MIN_QUALITY:
-            lower_short_count += 1
-
-    # =====================================================
-    # FINAL DECISION
-    # =====================================================
-    final = "NO TRADE"
-
-    # =====================================================
-    # LONG CONDITIONS
-    # =====================================================
-    long_conditions = (
-        higher_tf_long
-        and lower_long_count >= MIN_LOWER_CONFIRMATIONS
-        and long_ratio >= MIN_DIRECTIONAL_RATIO
-        and long_ratio > short_ratio
-    )
-
-    if long_conditions:
-        final = "LONG"
-
-    # =====================================================
-    # SHORT CONDITIONS
-    # =====================================================
-    short_conditions = (
-        higher_tf_short
-        and lower_short_count >= MIN_LOWER_CONFIRMATIONS
-        and short_ratio >= MIN_DIRECTIONAL_RATIO
-        and short_ratio > long_ratio
-    )
-
-    if final == "NO TRADE" and short_conditions:
-        final = "SHORT"
-
-    # =====================================================
-    # NEWS FILTER
-    # =====================================================
-    news = {
-        "available": False,
-        "label": "NEUTRAL",
-        "post_count": 0
+    high_signals = {
+        tf: timeframes[tf]["signal"]
+        for tf in HIGH_TIMEFRAMES
+        if tf in timeframes
     }
 
-    news_blocked = False
+    daily_signal = high_signals.get("1d", "NO TRADE")
+    h4_signal = high_signals.get("4h", "NO TRADE")
 
-    news_filter_enabled = getattr(config, "NEWS_FILTER_ENABLED", True)
+    long_count = sum(
+        1 for s in timeframes.values() if s.get("signal") == "LONG"
+    )
 
-    if news_filter_enabled:
-        news = _get_news_result(symbol)
+    short_count = sum(
+        1 for s in timeframes.values() if s.get("signal") == "SHORT"
+    )
 
-        # -------------------------------------------------
-        # BEARISH NEWS
-        #
-        # LONG  -> blocked
-        # SHORT -> supported / allowed
-        # -------------------------------------------------
-        if final in ["LONG", "SHORT"]:
-            if _news_blocks_signal(final, news):
-                news_blocked = True
-                final = "NO TRADE"
+    lower_long_count = sum(
+        1
+        for tf in LOWER_TIMEFRAMES
+        if timeframes.get(tf, {}).get("signal") == "LONG"
+    )
 
-    # =====================================================
-    # ENTRY PRICE
-    # =====================================================
-    entry_price = None
-    atr = None
+    lower_short_count = sum(
+        1
+        for tf in LOWER_TIMEFRAMES
+        if timeframes.get(tf, {}).get("signal") == "SHORT"
+    )
 
-    entry_data = results.get("1h", {})
+    long_quality_values = [
+        timeframes[tf].get("quality", 0)
+        for tf in timeframes
+        if timeframes[tf].get("signal") == "LONG"
+    ]
 
-    try:
-        if entry_data.get("price") is not None:
-            entry_price = float(entry_data["price"])
-    except Exception:
-        entry_price = None
+    short_quality_values = [
+        timeframes[tf].get("quality", 0)
+        for tf in timeframes
+        if timeframes[tf].get("signal") == "SHORT"
+    ]
 
-    # =====================================================
-    # ATR
-    # =====================================================
-    try:
-        if entry_data.get("atr") is not None:
-            atr = float(entry_data["atr"])
-    except Exception:
-        atr = None
+    long_quality = (
+        sum(long_quality_values) / len(long_quality_values)
+        if long_quality_values else 0
+    )
 
-    # =====================================================
-    # FALLBACK ENTRY DATA
-    # =====================================================
-    if entry_price is None:
-        for timeframe in ["2h", "3h", "4h", "1d"]:
-            data = results.get(timeframe, {})
-            try:
-                if data.get("price") is not None:
-                    entry_price = float(data["price"])
-                    if data.get("atr") is not None:
-                        atr = float(data["atr"])
-                    break
-            except Exception:
-                continue
+    short_quality = (
+        sum(short_quality_values) / len(short_quality_values)
+        if short_quality_values else 0
+    )
 
-    # =====================================================
-    # RISK MANAGEMENT
-    # =====================================================
-    if (
-        final in ["LONG", "SHORT"]
-        and entry_price is not None
-        and atr is not None
-        and atr > 0
-    ):
-        risk = calculate_risk(
-            entry_price=entry_price,
-            signal=final,
-            atr=atr,
-            risk_percent=1.0,
-            stop_atr=2.0,
-            tp1_atr=2.0,
-            tp2_atr=4.0
-        )
-    else:
-        risk = {
-            "valid": False,
-            "reason": "سیگنال قابل معامله وجود ندارد"
-        }
+    total_directional = long_count + short_count
 
-    # =====================================================
-    # RETURN
-    # =====================================================
-    return {
-        "signal": final,
-        "long_weight": round(long_weight, 3),
-        "short_weight": round(short_weight, 3),
-        "long_ratio": round(long_ratio, 3),
-        "short_ratio": round(short_ratio, 3),
-        "long_quality": round(long_quality_ratio, 4),
-        "short_quality": round(short_quality_ratio, 4),
-        "quality_margin": round(quality_margin, 4),
+    directional_ratio_long = (
+        long_count / total_directional if total_directional else 0
+    )
+
+    directional_ratio_short = (
+        short_count / total_directional if total_directional else 0
+    )
+
+    result = {
+        "signal": "NO TRADE",
+        "timeframes": timeframes,
         "long_count": long_count,
         "short_count": short_count,
         "lower_long_count": lower_long_count,
         "lower_short_count": lower_short_count,
-        "daily_signal": daily_signal,
-        "daily_quality": round(daily_quality, 4),
-        "four_hour_signal": four_hour_signal,
-        "four_hour_quality": round(four_hour_quality, 4),
-        "entry_price": entry_price,
-        "atr": atr,
-        "risk": risk,
-        "news": news,
-        "news_blocked": news_blocked,
-        "timeframes": results
+        "long_quality": round(long_quality, 4),
+        "short_quality": round(short_quality, 4),
+        "quality_margin": round(abs(long_quality - short_quality), 4),
+        "risk": {"valid": False},
+        "news": {"available": False, "label": "NEUTRAL", "post_count": 0},
     }
 
+    signal = "NO TRADE"
 
-# =========================================================
-# MANUAL TEST
-# =========================================================
-if __name__ == "__main__":
+    if (
+        daily_signal == "LONG"
+        and h4_signal == "LONG"
+        and lower_long_count >= MIN_LOWER_CONFIRMATIONS
+        and long_quality >= MIN_QUALITY
+        and directional_ratio_long >= MIN_DIRECTIONAL_RATIO
+    ):
+        signal = "LONG"
 
-    result = final_signal()
+    elif (
+        daily_signal == "SHORT"
+        and h4_signal == "SHORT"
+        and lower_short_count >= MIN_LOWER_CONFIRMATIONS
+        and short_quality >= MIN_QUALITY
+        and directional_ratio_short >= MIN_DIRECTIONAL_RATIO
+    ):
+        signal = "SHORT"
 
-    print("\n==========================")
-    print("FINAL SIGNAL")
-    print("==========================")
-    print("Signal:", result["signal"])
-    print("LONG WEIGHT:", result["long_weight"])
-    print("SHORT WEIGHT:", result["short_weight"])
-    print("LONG QUALITY:", result["long_quality"])
-    print("SHORT QUALITY:", result["short_quality"])
-    print("DAILY:", result["daily_signal"], result["daily_quality"])
-    print("4H:", result["four_hour_signal"], result["four_hour_quality"])
-    print("LOWER LONG:", result["lower_long_count"])
-    print("LOWER SHORT:", result["lower_short_count"])
-    print("ENTRY:", result["entry_price"])
-    print("ATR:", result["atr"])
-    print("NEWS:", result["news"])
-    print("NEWS BLOCKED:", result["news_blocked"])
-    print("RISK:", result["risk"])
+    if signal in ("LONG", "SHORT"):
+
+        news = _get_symbol_news(symbol)
+
+        result["news"] = news
+
+        if _news_blocks_signal(signal, news):
+
+            result["signal"] = "NO TRADE"
+            result["reason"] = "سیگنال به‌دلیل اخبار منفی مسدود شد."
+
+            return result
+
+        entry_tf_data = timeframes.get(ENTRY_TIMEFRAME, {})
+
+        entry_price = entry_tf_data.get("price")
+        stop_loss = entry_tf_data.get("stop_loss")
+        take_profit = entry_tf_data.get("take_profit")
+
+        risk = build_risk(
+            signal=signal,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+
+        result["risk"] = risk
+
+        if risk.get("valid"):
+            result["signal"] = signal
+
+    return result
