@@ -1,331 +1,291 @@
-"""
-execution_engine.py
-
-Bridges a signal_engine.py result to an actual (or paper) order on
-Toobit. This is the ONLY place that should ever call
-toobit_client.place_market_order - keep it that way so there's one
-choke point to audit.
-
-Trading mode is controlled by config.TRADING_MODE:
-  "PAPER" -> nothing is sent to Toobit's order endpoints. The
-             intended order is logged and returned as if it had been
-             placed, so the rest of the bot (Telegram messages,
-             position bookkeeping) behaves identically to live mode.
-             Safe default.
-  "LIVE"  -> real orders are sent with real money.
-
-Regardless of mode, position_tracker.py keeps a local record of what
-this engine believes is currently open per symbol, so an automatic
-scan loop never stacks a second position on a signal that's still
-active on the next cycle.
-"""
-
-import math
-import time
-
-import toobit_client
+import config
 import position_tracker
-import scanner
-from config import TRADING_MODE, RISK_PERCENT
+import toobit_client
+from scanner import get_klines
 
 
 class ExecutionError(Exception):
+    """خطای عادی اجرا - چیزی برای اطلاع فوری به کاربر نیست
+    (مثلاً پوزیشن از قبل باز است، یا حجم خیلی کوچک است)."""
     pass
 
 
-class UnprotectedPositionError(Exception):
+class UnprotectedPositionError(ExecutionError):
     """
-    Raised only when a LIVE position was opened, its SL and/or TP
-    order placement failed, AND the emergency flatten attempt also
-    failed. This means a real, unprotected, untracked position may
-    still be open on the exchange and needs immediate manual
-    attention. Callers (bot.py) should treat this as high priority
-    and surface it to the user clearly, not just log-and-skip like
-    a normal ExecutionError.
+    وضعیت بحرانی: سفارش باز کردن پوزیشن روی صرافی موفق بوده اما
+    ثبت حد ضرر/حد سود شکست خورده و حتی تلاش برای بستن اضطراری
+    (emergency flatten) هم ناموفق بوده - یعنی الان یک پوزیشن واقعی
+    و کاملاً بدون محافظت روی صرافی باز است. این باید همیشه فوراً
+    و به‌صورت جدا از سایر خطاها به کاربر اطلاع داده شود.
     """
     pass
 
 
-def calculate_quantity(symbol: str, entry_price: float, stop_loss: float,
-                        available_usdt: float, risk_percent: float = None) -> float:
-    """
-    Position size such that a full stop-loss hit loses exactly
-    risk_percent% of available_usdt (before fees/slippage).
+# =========================================================
+# محاسبه حجم معامله
+#
+# FIX: قبلاً این تابع entry_price را به‌جای symbol به تابع
+# step-size می‌داد، و آن تابع هم اصلاً از ورودی‌اش استفاده
+# نمی‌کرد و همیشه 0.001 هاردکد برمی‌گرداند - یعنی حجم واقعی
+# برای همه‌ی نمادها (حتی DOGE/XRP با قیمت خیلی پایین‌تر) یکسان
+# و غلط محاسبه می‌شد. حالا از step_size/min_qty واقعی نماد
+# استفاده می‌شود و به‌جای round، همیشه به پایین گرد می‌شود
+# (floor) تا هیچ‌وقت بیشتر از ریسک مجاز باز نشود.
+# =========================================================
 
-    BUG FIX: this used to call a step-size helper with entry_price
-    instead of the symbol, and that helper ignored its argument
-    entirely and returned a hardcoded 0.001 for every coin. That's
-    wrong for both cheap coins (rounds away too much precision) and
-    expensive/large-tick coins (could round to an invalid quantity).
-    Now it looks up the symbol's real lot size from Toobit.
-    """
-    risk_percent = RISK_PERCENT if risk_percent is None else risk_percent
+def calculate_quantity(symbol, entry_price, stop_loss, balance):
 
-    if entry_price <= 0 or stop_loss <= 0:
-        raise ExecutionError("قیمت ورود یا حد ضرر نامعتبر است")
+    risk_amount = balance * (config.RISK_PERCENT / 100.0)
 
-    risk_amount_usdt = available_usdt * (risk_percent / 100.0)
-    risk_per_contract = abs(entry_price - stop_loss)
+    risk_per_unit = abs(entry_price - stop_loss)
 
-    if risk_per_contract <= 0:
-        raise ExecutionError("فاصله ورود تا حد ضرر صفر است")
+    if risk_per_unit <= 0:
+        raise ExecutionError("فاصله ورود تا حد ضرر نامعتبر است.")
 
-    raw_quantity = risk_amount_usdt / risk_per_contract
+    raw_quantity = risk_amount / risk_per_unit
 
-    filters = toobit_client.get_symbol_filters(symbol)
-    step = filters["step_size"]
-    min_qty = filters["min_qty"]
+    if config.TRADING_MODE == "LIVE":
 
-    if step <= 0:
-        step = 0.001
+        quantity = toobit_client.round_quantity_down(symbol, raw_quantity)
 
-    # Floor (never round up) to the exchange's step size - rounding
-    # up would silently risk more than risk_percent intended.
-    quantity = math.floor(raw_quantity / step) * step
-    quantity = round(quantity, 10)
+        filters = toobit_client.get_symbol_filters(symbol)
 
-    if quantity < min_qty:
-        raise ExecutionError(
-            f"{symbol}: حجم محاسبهشده ({quantity}) کمتر از حداقل مجاز "
-            f"صرافی ({min_qty}) است - با ریسک {risk_percent}% این معامله "
-            f"قابل اجرا نیست، رد شد."
-        )
+        if quantity < filters["min_qty"]:
+            raise ExecutionError(
+                f"حجم محاسبه‌شده ({quantity}) کمتر از حداقل مجاز "
+                f"({filters['min_qty']}) است."
+            )
+
+    else:
+
+        # در PAPER هم دقت معقولی اعمال می‌کنیم تا اعداد واقعی‌تر
+        # به نظر برسند، بدون نیاز به اتصال واقعی به صرافی.
+        quantity = round(raw_quantity, 4)
 
     return quantity
 
 
-def execute_signal(symbol: str, signal: str, entry: float, stop_loss: float, take_profit: float):
-    """
-    signal: "LONG" or "SHORT"
-    Returns a dict describing what happened (for the Telegram message).
-    Raises ExecutionError on anything that should block the trade
-    (rejected before any real order was sent).
-    Raises UnprotectedPositionError if a LIVE position was opened but
-    could not be protected with SL/TP AND could not be flattened -
-    this needs immediate manual attention.
-    """
-    if signal not in ("LONG", "SHORT"):
-        raise ExecutionError("سیگنال نامعتبر است")
+def _get_balance():
 
-    # --- guard: don't stack a second position on the same symbol ---
-    # BUG FIX: this guard used to only run in LIVE mode. PAPER mode had
-    # no protection at all, so a signal that stayed active across scan
-    # cycles would "open" a new fake position every single cycle.
-    if position_tracker.is_open(symbol):
-        raise ExecutionError(f"{symbol}: پوزیشن باز از قبل ثبت شده (tracker) - رد شد")
+    if config.TOOBIT_API_KEY and config.TOOBIT_SECRET_KEY:
 
-    if TRADING_MODE == "LIVE":
-        if toobit_client.has_open_position(symbol):
-            raise ExecutionError(f"{symbol}: پوزیشن باز از قبل روی صرافی وجود دارد - رد شد")
-        available_usdt = toobit_client.get_available_usdt()
-    else:
-        # PAPER mode: no order is ever sent, but if API keys are already
-        # configured we still pull the real balance so the simulated
-        # quantity numbers mean something. Falls back to a placeholder
-        # if that call fails for any reason (missing keys, network, etc).
         try:
-            available_usdt = toobit_client.get_available_usdt()
+            return toobit_client.get_available_balance_usdt()
         except Exception as e:
-            print(f"WARN paper balance fetch failed, using placeholder: {e}")
-            available_usdt = 1000.0
+            print("BALANCE fetch error, falling back:", e)
 
-    quantity = calculate_quantity(symbol, entry, stop_loss, available_usdt)
+    return config.PAPER_FALLBACK_BALANCE_USDT
 
-    open_side = "BUY_OPEN" if signal == "LONG" else "SELL_OPEN"
-    close_side = "SELL_CLOSE" if signal == "LONG" else "BUY_CLOSE"
 
-    result = {
-        "mode": TRADING_MODE,
-        "symbol": symbol,
-        "signal": signal,
+# =========================================================
+# اجرای سیگنال
+# =========================================================
+
+def execute_signal(symbol, signal, entry, stop_loss, take_profit):
+
+    if signal not in ("LONG", "SHORT"):
+        raise ExecutionError("سیگنال نامعتبر است.")
+
+    # ---- محافظ Stacking: هم در PAPER و هم در LIVE ----
+    # قبلاً این محافظ فقط در حالت LIVE اجرا می‌شد - در PAPER هیچ
+    # محافظتی نبود، یعنی یک حلقه‌ی خودکار می‌توانست هر بار اسکن
+    # یک پوزیشن فرضی جدید برای همان نماد باز کند تا وقتی سیگنال
+    # فعال بود.
+    if position_tracker.has_open_position(symbol):
+        raise ExecutionError(f"پوزیشن باز موجود برای {symbol}.")
+
+    balance = _get_balance()
+
+    quantity = calculate_quantity(symbol, entry, stop_loss, balance)
+
+    if config.TRADING_MODE == "LIVE":
+
+        return _execute_live(
+            symbol, signal, entry, stop_loss, take_profit, quantity
+        )
+
+    return _execute_paper(
+        symbol, signal, entry, stop_loss, take_profit, quantity
+    )
+
+
+def _execute_paper(symbol, signal, entry, stop_loss, take_profit, quantity):
+
+    position_tracker.open_position(
+        symbol=symbol,
+        mode="PAPER",
+        signal=signal,
+        entry_price=entry,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        quantity=quantity,
+    )
+
+    return {
+        "mode": "PAPER",
         "quantity": quantity,
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit,
-        "orders": [],
     }
 
-    if TRADING_MODE != "LIVE":
-        result["orders"].append({
-            "type": "PAPER_MARKET_OPEN",
-            "side": open_side,
-            "quantity": quantity,
-            "note": "شبیهسازی - هیچ درخواستی به Toobit ارسال نشد",
-        })
-        position_tracker.open_position(symbol, {
-            "signal": signal,
-            "entry": entry,
-            "stop_loss": stop_loss,
-            "take_profit": take_profit,
-            "quantity": quantity,
-            "mode": "PAPER",
-            "opened_at": time.time(),
-        })
-        return result
 
-    # ---- LIVE: real orders below this line ----
-    open_order = toobit_client.place_market_order(
-        symbol=symbol,
-        side=open_side,
-        quantity=str(quantity),
-        client_order_id=f"auto_{symbol}_{int(time.time())}",
-    )
-    result["orders"].append({"type": "MARKET_OPEN", "response": open_order})
+def _execute_live(symbol, signal, entry, stop_loss, take_profit, quantity):
 
-    # =====================================================
-    # CRITICAL FIX: previously, if placing the SL or TP order
-    # raised an exception, execute_signal() propagated it upward
-    # immediately - leaving the just-opened LIVE position on the
-    # exchange with NO stop-loss, NO take-profit, and never
-    # recorded in position_tracker (since open_position() was only
-    # called after both orders succeeded). That position would sit
-    # there completely unprotected and invisible to the bot's own
-    # bookkeeping until someone noticed manually.
-    #
-    # Now: if SL and/or TP placement fails, we immediately try to
-    # flatten (market-close) the position instead of leaving it
-    # open and unprotected. Only if that flatten attempt ALSO fails
-    # do we raise UnprotectedPositionError - a distinct, high-
-    # priority error the caller should surface loudly.
-    # =====================================================
+    open_side = "buy" if signal == "LONG" else "sell"
+    close_side = "sell" if signal == "LONG" else "buy"
+
     try:
-        sl_order = toobit_client.place_stop_order(
-            symbol=symbol,
-            side=close_side,
-            quantity=str(quantity),
-            stop_price=stop_loss,
-            reduce_only=True,
-        )
-        result["orders"].append({"type": "STOP_LOSS", "response": sl_order})
+        toobit_client.place_market_order(symbol, open_side, quantity)
+    except Exception as e:
+        raise ExecutionError(f"باز کردن پوزیشن ناموفق بود: {e}")
 
-        tp_order = toobit_client.place_stop_order(
-            symbol=symbol,
-            side=close_side,
-            quantity=str(quantity),
-            stop_price=take_profit,
-            reduce_only=True,
-        )
-        result["orders"].append({"type": "TAKE_PROFIT", "response": tp_order})
+    # ---- FIX: قبلاً position_tracker.open_position() فقط بعد از
+    # موفقیت *هر دو* سفارش SL و TP صدا زده می‌شد. یعنی اگر یکی از
+    # آن‌ها شکست می‌خورد، یک پوزیشن واقعی و بدون‌ردیابی روی صرافی
+    # باقی می‌ماند. حالا هر خطا در SL/TP بلافاصله باعث تلاش برای
+    # بستن اضطراری پوزیشن می‌شود.
+    try:
+
+        toobit_client.place_stop_loss(symbol, close_side, quantity, stop_loss)
+        toobit_client.place_take_profit(symbol, close_side, quantity, take_profit)
 
     except Exception as protection_error:
-        print(
-            f"CRITICAL {symbol}: SL/TP placement failed after market "
-            f"open ({protection_error}) - attempting emergency flatten"
-        )
 
         try:
-            flatten_order = toobit_client.close_position_market(
-                symbol=symbol,
-                side=close_side,
-                quantity=str(quantity),
-            )
-            result["orders"].append({
-                "type": "EMERGENCY_FLATTEN",
-                "reason": str(protection_error),
-                "response": flatten_order,
-            })
-            # Position was opened then immediately flattened - never
-            # actually held, so it should NOT be tracked as open.
+
+            toobit_client.close_position_market(symbol, close_side, quantity)
+
             raise ExecutionError(
-                f"{symbol}: پوزیشن بهخاطر شکست ثبت حد ضرر/سود بلافاصله "
-                f"بسته شد (Flatten اضطراری موفق بود). جزئیات خطا: "
+                f"ثبت حد ضرر/حد سود ناموفق بود، پوزیشن بسته شد: "
                 f"{protection_error}"
             )
 
         except ExecutionError:
+
             raise
 
         except Exception as flatten_error:
-            # Flatten itself failed too - this is the dangerous case.
-            # The position IS still open on the exchange, unprotected,
-            # and NOT in position_tracker. Surface this loudly.
-            print(
-                f"CRITICAL {symbol}: emergency flatten ALSO failed "
-                f"({flatten_error}) - position may still be open and "
-                f"UNPROTECTED on the exchange. Manual check required."
-            )
+
             raise UnprotectedPositionError(
-                f"⚠ {symbol}: پوزیشن {signal} با حجم {quantity} باز شد "
-                f"اما ثبت حد ضرر/سود شکست خورد و تلاش برای بستن اضطراری "
-                f"هم ناموفق بود. این پوزیشن ممکن است هنوز روی صرافی باز "
-                f"و بدون محافظت باشد - فوراً بهصورت دستی چک کن.\n"
-                f"خطای اولیه: {protection_error}\n"
-                f"خطای Flatten: {flatten_error}"
-            ) from flatten_error
+                f"ثبت حد ضرر/حد سود ناموفق بود ({protection_error}) "
+                f"و بستن اضطراری هم ناموفق بود ({flatten_error})."
+            )
 
-    position_tracker.open_position(symbol, {
-        "signal": signal,
-        "entry": entry,
-        "stop_loss": stop_loss,
-        "take_profit": take_profit,
-        "quantity": quantity,
+    position_tracker.open_position(
+        symbol=symbol,
+        mode="LIVE",
+        signal=signal,
+        entry_price=entry,
+        stop_loss=stop_loss,
+        take_profit=take_profit,
+        quantity=quantity,
+    )
+
+    return {
         "mode": "LIVE",
-        "opened_at": time.time(),
-    })
+        "quantity": quantity,
+    }
 
-    return result
+
+# =========================================================
+# همگام‌سازی پوزیشن‌ها (تشخیص بسته‌شدن‌ها)
+# =========================================================
+
+def _get_last_price(symbol):
+
+    try:
+
+        df = get_klines(symbol=symbol, interval="1h", limit=2)
+
+        if df is not None and len(df) > 0:
+            return float(df["close"].iloc[-1])
+
+    except Exception as e:
+        print(f"SYNC price error {symbol}: {e}")
+
+    return None
 
 
 def sync_positions():
-    """
-    Call at the start of each auto-scan cycle, BEFORE looking for new
-    signals. Clears local tracker entries for symbols whose position
-    has actually closed since the last check:
 
-      - LIVE: ask Toobit directly with has_open_position(). If Toobit
-        no longer reports a position (SL/TP filled, or closed some
-        other way), clear the local tracker entry too.
-      - PAPER: nothing on Toobit ever knew about this trade, so this
-        is the only way to find out - compare the latest 1h close
-        against the tracked stop_loss/take_profit.
-
-    Returns a list of {"symbol", "result", "detail"} for positions
-    that closed this cycle, so the caller can notify the user.
-    """
     closed = []
 
-    for symbol, pos in list(position_tracker.all_positions().items()):
-        if pos.get("mode") == "LIVE":
-            try:
-                if not toobit_client.has_open_position(symbol):
-                    position_tracker.close_position(symbol)
-                    closed.append({"symbol": symbol, "result": "CLOSED_ON_EXCHANGE", "detail": pos})
-            except Exception as e:
-                print(f"WARN sync_positions LIVE {symbol}: {e}")
-            continue
+    positions = position_tracker.get_all_open_positions()
 
-        # PAPER
-        try:
-            df = scanner.get_klines(symbol=symbol, interval="1h", limit=2)
-            if df is None or len(df) == 0:
+    for symbol, position in positions.items():
+
+        mode = position.get("mode")
+
+        if mode == "LIVE":
+
+            try:
+                still_open = toobit_client.has_open_position(symbol)
+            except Exception as e:
+                print(f"SYNC live-check error {symbol}: {e}")
                 continue
 
-            price = float(df["close"].iloc[-1])
-            signal = pos["signal"]
-            sl = pos["stop_loss"]
-            tp = pos["take_profit"]
+            if still_open:
+                continue
 
-            hit = None
-            if signal == "LONG":
-                if price <= sl:
-                    hit = "SL"
-                elif price >= tp:
-                    hit = "TP"
-            else:
-                if price >= sl:
-                    hit = "SL"
-                elif price <= tp:
-                    hit = "TP"
+            # پوزیشن دیگر روی صرافی باز نیست - یعنی SL یا TP اجرا شده.
+            price = _get_last_price(symbol) or position.get("entry_price")
 
-            if hit:
-                position_tracker.close_position(symbol)
-                closed.append({
-                    "symbol": symbol,
-                    "result": hit,
-                    "detail": pos,
-                    "close_price": price,
-                })
-        except Exception as e:
-            print(f"WARN sync_positions PAPER {symbol}: {e}")
+            result = _guess_result(position, price)
+
+            position_tracker.close_position(symbol)
+
+            closed.append({"symbol": symbol, "result": result})
+
+        else:
+
+            price = _get_last_price(symbol)
+
+            if price is None:
+                continue
+
+            signal = position.get("signal")
+            stop_loss = position.get("stop_loss")
+            take_profit = position.get("take_profit")
+
+            hit_stop = (
+                (signal == "LONG" and price <= stop_loss)
+                or
+                (signal == "SHORT" and price >= stop_loss)
+            )
+
+            hit_target = (
+                (signal == "LONG" and price >= take_profit)
+                or
+                (signal == "SHORT" and price <= take_profit)
+            )
+
+            if not hit_stop and not hit_target:
+                continue
+
+            result = "WIN" if hit_target else "LOSS"
+
+            position_tracker.close_position(symbol)
+
+            closed.append({"symbol": symbol, "result": result})
 
     return closed
+
+
+def _guess_result(position, price):
+
+    signal = position.get("signal")
+    entry = position.get("entry_price")
+    take_profit = position.get("take_profit")
+
+    if price is None or entry is None or take_profit is None:
+        return "UNKNOWN"
+
+    reward_distance = abs(take_profit - entry)
+
+    if reward_distance <= 0:
+        return "UNKNOWN"
+
+    if signal == "LONG":
+        progress = (price - entry) / reward_distance
+    else:
+        progress = (entry - price) / reward_distance
+
+    return "WIN" if progress > 0 else "LOSS"
