@@ -4,4 +4,6 @@ pandas
 numpy
 ta
 feedparser
+ccxt
+
 
