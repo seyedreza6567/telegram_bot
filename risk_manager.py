@@ -1,138 +1,46 @@
-def calculate_risk(
-    entry_price,
-    signal,
-    atr=None,
-    risk_percent=1.0,
-    stop_atr=2.0,
-    tp1_atr=2.0,
-    tp2_atr=4.0
-):
+MIN_RISK_REWARD = 1.2
 
-    try:
 
-        entry_price = float(
-            entry_price
-        )
+def build_risk(signal, entry_price, stop_loss, take_profit):
+    """
+    از روی سیگنال خام (LONG/SHORT) و سطوح قیمتی خروجی analyze()،
+    یک دیکشنری ریسک آماده برای اجرا/نمایش می‌سازد؛ شامل tp1
+    (خروج جزئی زودتر، نصف فاصله تا TP نهایی) و اعتبارسنجی نسبت
+    ریسک به ریوارد.
+    """
 
-    except Exception:
-
-        return {
-            "valid": False,
-            "reason": "قیمت ورود نامعتبر است"
-        }
-
-    if entry_price <= 0:
-
-        return {
-            "valid": False,
-            "reason": "قیمت ورود نامعتبر است"
-        }
-
-    if signal not in [
-        "LONG",
-        "SHORT"
-    ]:
-
-        return {
-            "valid": False,
-            "reason": "سیگنال معتبر نیست"
-        }
-
-    if atr is None:
-
-        return {
-            "valid": False,
-            "reason": "ATR موجود نیست"
-        }
-
-    try:
-
-        atr = float(atr)
-
-    except Exception:
-
-        return {
-            "valid": False,
-            "reason": "ATR نامعتبر است"
-        }
-
-    if atr <= 0:
-
-        return {
-            "valid": False,
-            "reason": "ATR باید بزرگ‌تر از صفر باشد"
-        }
-
-    if signal == "LONG":
-
-        stop_loss = (
-            entry_price -
-            atr * stop_atr
-        )
-
-        tp1 = (
-            entry_price +
-            atr * tp1_atr
-        )
-
-        take_profit = (
-            entry_price +
-            atr * tp2_atr
-        )
-
-    else:
-
-        stop_loss = (
-            entry_price +
-            atr * stop_atr
-        )
-
-        tp1 = (
-            entry_price -
-            atr * tp1_atr
-        )
-
-        take_profit = (
-            entry_price -
-            atr * tp2_atr
-        )
-
-    return {
-        "valid": True,
-        "signal": signal,
-        "entry_price": round(
-            entry_price,
-            8
-        ),
-        "atr": round(
-            atr,
-            8
-        ),
-        "stop_loss": round(
-            stop_loss,
-            8
-        ),
-        "tp1": round(
-            tp1,
-            8
-        ),
-        "take_profit": round(
-            take_profit,
-            8
-        ),
-        "risk_percent": risk_percent,
-        "stop_atr": stop_atr,
-        "tp1_atr": tp1_atr,
-        "tp2_atr": tp2_atr
+    result = {
+        "valid": False,
+        "entry_price": entry_price,
+        "stop_loss": stop_loss,
+        "tp1": None,
+        "take_profit": take_profit,
     }
 
+    if signal not in ("LONG", "SHORT"):
+        return result
 
-if __name__ == "__main__":
+    if entry_price is None or stop_loss is None or take_profit is None:
+        return result
 
-    print(
-        calculate_risk(
-            entry_price=100000,
-            signal="LONG",
-            atr=1000
-        )
-    )
+    risk_distance = abs(entry_price - stop_loss)
+
+    if risk_distance <= 0:
+        return result
+
+    reward_distance = abs(take_profit - entry_price)
+
+    risk_reward = reward_distance / risk_distance
+
+    if risk_reward < MIN_RISK_REWARD:
+        return result
+
+    if signal == "LONG":
+        tp1 = entry_price + (reward_distance * 0.5)
+    else:
+        tp1 = entry_price - (reward_distance * 0.5)
+
+    result["valid"] = True
+    result["tp1"] = round(tp1, 6)
+
+    return result
