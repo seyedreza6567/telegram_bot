@@ -880,47 +880,82 @@ async def messages(
 
     # =====================================================
     # قیمت‌ها
+    #
+    # FIX: قبلاً این بخش فقط قیمت "selected_symbol" را نشان
+    # می‌داد که پیش‌فرضش SYMBOL (=BTC) بود - یعنی تا وقتی از
+    # "📈 سیگنال‌ها" یک ارز دیگر انتخاب نکرده بودی، همیشه فقط
+    # قیمت BTC را می‌دیدی. حالا این دکمه قیمت همه‌ی ارزهای
+    # PRIORITY_SYMBOLS را یکجا لیست می‌کند.
     # =====================================================
 
     if text == "💰 قیمت‌ها":
 
-        selected_symbol = (
-            context.user_data.get(
-                "selected_symbol",
-                SYMBOL
-            )
+        await update.message.reply_text(
+            "🔎 در حال دریافت قیمت‌ها...\n"
+            "لطفاً صبر کن..."
         )
 
-        try:
+        lines = []
 
-            df = get_klines(
-                symbol=selected_symbol,
-                interval="1h",
-                limit=5
+        for symbol in PRIORITY_SYMBOLS:
+
+            name = (
+                symbol
+                .replace("-SWAP-USDT", "")
+                .replace("-USDT", "")
             )
 
-            if df is not None:
+            try:
 
-                price = df[
-                    "close"
-                ].iloc[-1]
-
-                await update.message.reply_text(
-                    f"💰 قیمت {selected_symbol}:\n\n"
-                    f"{price}"
+                df = get_klines(
+                    symbol=symbol,
+                    interval="1h",
+                    limit=5
                 )
 
-            else:
+                if df is not None and len(df) > 0:
 
-                await update.message.reply_text(
-                    "❌ دریافت قیمت ناموفق بود."
+                    price = df[
+                        "close"
+                    ].iloc[-1]
+
+                    lines.append(
+                        f"💰 {name}: {price}"
+                    )
+
+                else:
+
+                    lines.append(
+                        f"⚪ {name}: دریافت ناموفق"
+                    )
+
+            except Exception as e:
+
+                print(
+                    f"PRICE ERROR {symbol}: {e}"
                 )
 
-        except Exception as e:
+                lines.append(
+                    f"⚪ {name}: خطا"
+                )
+
+        if not lines:
 
             await update.message.reply_text(
-                f"❌ خطا:\n{e}"
+                "❌ دریافت قیمت‌ها ناموفق بود."
             )
+
+            return
+
+        message = (
+            "💰 قیمت‌های لحظه‌ای\n"
+            "━━━━━━━━━━━━━━\n\n"
+            + "\n".join(lines)
+        )
+
+        await update.message.reply_text(
+            message
+        )
 
         return
 
