@@ -1,28 +1,98 @@
 import os
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-
-TOOBIT_API_KEY = os.getenv("TOOBIT_API_KEY")
-TOOBIT_SECRET_KEY = os.getenv("TOOBIT_SECRET_KEY")
 
 # =========================================================
-# Auto-trading
+# تلگرام
 # =========================================================
-TRADING_MODE = os.getenv("TRADING_MODE", "PAPER").upper()
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise RuntimeError(
+        "BOT_TOKEN تنظیم نشده است. "
+        "آن را در تنظیمات Variables اضافه کن."
+    )
+
+
+# =========================================================
+# توبیت (Toobit)
+# =========================================================
+
+TOOBIT_API_KEY = os.environ.get("TOOBIT_API_KEY")
+TOOBIT_SECRET_KEY = os.environ.get("TOOBIT_SECRET_KEY")
+
+
+# =========================================================
+# حالت معاملاتی
+#
+# PAPER : فقط شبیه‌سازی - هیچ سفارش واقعی به صرافی ارسال نمی‌شود.
+# LIVE  : سفارش واقعی با پول واقعی روی توبیت ارسال می‌شود.
+# =========================================================
+
+TRADING_MODE = os.environ.get(
+    "TRADING_MODE",
+    "PAPER"
+).strip().upper()
+
 if TRADING_MODE not in ("PAPER", "LIVE"):
     TRADING_MODE = "PAPER"
 
-RISK_PERCENT = float(os.getenv("RISK_PERCENT", "2.0"))
+if TRADING_MODE == "LIVE" and (
+    not TOOBIT_API_KEY
+    or
+    not TOOBIT_SECRET_KEY
+):
+    raise RuntimeError(
+        "TRADING_MODE=LIVE تنظیم شده اما "
+        "TOOBIT_API_KEY / TOOBIT_SECRET_KEY موجود نیست."
+    )
 
-AUTO_SCAN_MINUTES = int(os.getenv("AUTO_SCAN_MINUTES", "15"))
 
 # =========================================================
-# News filter (free RSS-based, via news_engine.py)
+# مدیریت ریسک
 # =========================================================
-# news_engine.py pulls from CoinDesk/Cointelegraph/Decrypt/Bitcoin
-# Magazine RSS feeds - no API key needed. If it fails to fetch for
-# any reason, it fails safe: it never blocks a signal, it just
-# reports news as "unavailable".
-#
-# Master on/off switch for letting news veto a candle-based signal.
-NEWS_FILTER_ENABLED = os.getenv("NEWS_FILTER_ENABLED", "true").lower() == "true"
+
+RISK_PERCENT = float(
+    os.environ.get(
+        "RISK_PERCENT",
+        "2.0"
+    )
+)
+
+# موجودی فرضی برای محاسبه حجم در حالت PAPER، وقتی که
+# نتوانیم موجودی واقعی حساب را از توبیت بخوانیم.
+PAPER_FALLBACK_BALANCE_USDT = float(
+    os.environ.get(
+        "PAPER_FALLBACK_BALANCE_USDT",
+        "1000"
+    )
+)
+
+DEFAULT_LEVERAGE = int(
+    os.environ.get(
+        "DEFAULT_LEVERAGE",
+        "5"
+    )
+)
+
+
+# =========================================================
+# اسکن خودکار
+# =========================================================
+
+AUTO_SCAN_MINUTES = int(
+    os.environ.get(
+        "AUTO_SCAN_MINUTES",
+        "15"
+    )
+)
+
+
+# =========================================================
+# فیلتر اخبار (news_engine.py - منبع رایگان RSS)
+# =========================================================
+
+NEWS_FILTER_ENABLED = os.environ.get(
+    "NEWS_FILTER_ENABLED",
+    "true"
+).strip().lower() in ("1", "true", "yes", "on")
