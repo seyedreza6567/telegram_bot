@@ -87,9 +87,11 @@ async def start(
 
     await update.message.reply_text(
         "🤖 ربات سیگنال فیوچرز فعال شد ✅\n\n"
+        "🧪 TEST-CHECK-999\n\n"
         "انتخاب کن:",
         reply_markup=reply_markup
     )
+
 
 
 # =========================================================
